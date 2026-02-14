@@ -66,7 +66,7 @@ async function startMiningLoop() {
 
     setInterval(async () => {
       try {
-        if (chain.mempool.length === 0) return; // Only produce if there are txs
+        // Tetap produksi blok meskipun mempool kosong untuk minting reward
 
         const lastHash = chain.lastBlock().hash;
         const scheduledWinner = chain.selectValidator(

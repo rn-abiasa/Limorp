@@ -16,7 +16,7 @@ export default {
     return withDb(async (db) => {
       let wallets = {};
       try {
-        wallets = await db.get("wallets");
+        wallets = (await db.get("wallets")) || {};
       } catch (e) {}
       wallets[name] = mnemonic;
       await db.put("wallets", wallets);
