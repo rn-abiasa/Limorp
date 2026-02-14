@@ -1,7 +1,8 @@
 import { WebSocket, WebSocketServer } from "ws";
 import crypto from "crypto";
 import Block from "../core/block.js";
-import Transaction from "../core/transaction.js"; // In case needed, but already has Block
+import Transaction from "../core/transaction.js";
+import { bigIntReplacer } from "../utils/network.js";
 
 export default class Network {
   constructor(blockchain, port, peers = []) {
@@ -79,20 +80,31 @@ export default class Network {
 
     // Handshake: Identify myself and send chain/peers
     ws.send(
-      JSON.stringify({
-        type: "HANDSHAKE",
-        data: {
-          nodeId: this.nodeId,
-          publicAddr: this.publicAddr,
+      JSON.stringify(
+        {
+          type: "HANDSHAKE",
+          data: {
+            nodeId: this.nodeId,
+            publicAddr: this.publicAddr,
+          },
         },
-      }),
+        bigIntReplacer,
+      ),
     );
-    ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
     ws.send(
-      JSON.stringify({
-        type: "PEERS",
-        data: [...this.blockchain.peers, this.publicAddr],
-      }),
+      JSON.stringify(
+        { type: "CHAIN", data: this.blockchain.chain },
+        bigIntReplacer,
+      ),
+    );
+    ws.send(
+      JSON.stringify(
+        {
+          type: "PEERS",
+          data: [...this.blockchain.peers, this.publicAddr],
+        },
+        bigIntReplacer,
+      ),
     );
   }
 
@@ -193,7 +205,8 @@ export default class Network {
 
     if (targetSockets.length > 0) {
       console.log(`P2P [BROAD]: ${msg.type} to ${targetSockets.length} peers`);
-      targetSockets.forEach((s) => s.send(JSON.stringify(msg)));
+      const serializedMsg = JSON.stringify(msg, bigIntReplacer);
+      targetSockets.forEach((s) => s.send(serializedMsg));
     }
   }
 }

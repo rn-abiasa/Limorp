@@ -12,3 +12,6 @@ export function getLocalIp() {
   }
   return "localhost";
 }
+
+export const bigIntReplacer = (key, value) =>
+  typeof value === "bigint" ? value.toString() : value;

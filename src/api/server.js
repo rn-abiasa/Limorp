@@ -5,14 +5,14 @@ import walletRoutes from "./routes/wallet.routes.js";
 import Wallet from "../wallet/wallet.js";
 import Transaction from "../core/transaction.js";
 
-const bigIntReplacer = (key, value) =>
-  typeof value === "bigint" ? value.toString() : value;
+import { getLocalIp, bigIntReplacer } from "../utils/network.js";
 
 export default function startAPI({ chain, p2p }, port = 4000) {
   const app = express();
 
   app.use(cors());
   app.use(express.json());
+  app.set("json replacer", bigIntReplacer);
 
   // Helper middleware
   app.use((req, res, next) => {
@@ -40,20 +40,15 @@ export default function startAPI({ chain, p2p }, port = 4000) {
 
   app.get("/nonce/:address", (req, res) => {
     const nonce = req.chain.getNonce(req.params.address);
-    res.set("Content-Type", "application/json");
-    res.send(
-      JSON.stringify({ address: req.params.address, nonce }, bigIntReplacer),
-    );
+    res.json({ address: req.params.address, nonce });
   });
 
   app.get("/stakes", (req, res) => {
-    res.set("Content-Type", "application/json");
-    res.send(JSON.stringify(req.chain.stakes, bigIntReplacer));
+    res.json(req.chain.stakes);
   });
 
   app.get("/contracts", (req, res) => {
-    res.set("Content-Type", "application/json");
-    res.send(JSON.stringify(req.chain.contractState, bigIntReplacer));
+    res.json(req.chain.contractState);
   });
 
   // Transaction submission
@@ -89,8 +84,7 @@ export default function startAPI({ chain, p2p }, port = 4000) {
       const block = await req.chain.createBlock(wallet);
       if (block) {
         req.p2p.broadcast({ type: "BLOCK", data: block });
-        res.set("Content-Type", "application/json");
-        res.send(JSON.stringify({ status: "success", block }, bigIntReplacer));
+        res.json({ status: "success", block });
       } else {
         res.status(500).json({ status: "fail", message: "Mining failed" });
       }
