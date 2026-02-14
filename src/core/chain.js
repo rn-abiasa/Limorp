@@ -3,16 +3,19 @@ import Transaction from "./transaction.js";
 import { runContract } from "./vm.js";
 import db from "../db/db.js";
 
+// PoT (Proof of Turn) Constants
+const VALIDATOR_TIMEOUT = 60000; // Node must announce every 60s to stay active
+
 export default class Blockchain {
   constructor() {
     this.chain = [this.genesis()];
     this.balances = {};
-    this.stakes = {};
+    this.validators = {}; // { address: lastSeenTimestamp }
     this.nonces = {};
     this.mempool = [];
     this.contractState = {};
     this.peers = [];
-    this.nodeId = null; // To be loaded or generated
+    this.nodeId = null;
   }
 
   async init() {
@@ -22,13 +25,27 @@ export default class Blockchain {
       this.balances = Object.fromEntries(
         Object.entries(saved.balances).map(([k, v]) => [k, BigInt(v)]),
       );
-      this.stakes = Object.fromEntries(
-        Object.entries(saved.stakes).map(([k, v]) => [k, BigInt(v)]),
-      );
       this.nonces = saved.nonces;
       this.contractState = saved.contractState;
       this.peers = saved.peers || [];
       this.nodeId = saved.nodeId || null;
+
+      // Hash Migration: Ensure all transactions in loaded chain have hashes
+      let migrated = false;
+      for (const block of this.chain) {
+        for (const tx of block.transactions) {
+          if (!tx.hash) {
+            const txInstance = new Transaction(tx);
+            tx.hash = txInstance.calculateHash();
+            migrated = true;
+          }
+        }
+      }
+      if (migrated) {
+        console.log("Blockchain: Migrated missing transaction hashes.");
+        this.save();
+      }
+
       console.log("Blockchain state loaded from disk.");
     }
   }
@@ -37,7 +54,6 @@ export default class Blockchain {
     await db.save({
       chain: this.chain,
       balances: this.balances,
-      stakes: this.stakes,
       nonces: this.nonces,
       contractState: this.contractState,
       peers: this.peers,
@@ -87,36 +103,58 @@ export default class Blockchain {
 
   addTransaction(txData) {
     const tx = txData instanceof Transaction ? txData : new Transaction(txData);
+
+    // 1. Basic Verification
     if (!Transaction.verify(tx)) {
       console.error("addTransaction: Verification failed");
-      return false;
+      return "ERROR";
     }
-    if (tx.nonce !== this.getPendingNonce(tx.from)) {
-      console.error(
-        `addTransaction: Nonce mismatch for ${tx.from}. Expected ${this.getPendingNonce(tx.from)}, got ${tx.nonce}`,
-      );
-      return false;
+
+    // 2. Already in mempool? (Deduplication)
+    if (this.mempool.some((t) => t.calculateHash() === tx.hash)) {
+      return "SKIPPED"; // Already buffered
     }
+
+    // 3. Already confirmed in chain? (Deduplication)
+    // We only check the last 50 blocks or so for performance in a real app,
+    // but here we check if its nonce is already used.
+    const currentNonce = this.getNonce(tx.from);
+    if (tx.nonce < currentNonce) {
+      return "SKIPPED"; // Already confirmed
+    }
+
+    // 4. Nonce Sequence Validation
+    const expectedNonce = this.getPendingNonce(tx.from);
+    if (tx.nonce !== expectedNonce) {
+      // Only log if it's a significant mismatch (e.g., a future gap)
+      if (tx.nonce > expectedNonce) {
+        console.error(
+          `addTransaction: Nonce gap for ${tx.from}. Expected ${expectedNonce}, got ${tx.nonce}`,
+        );
+      }
+      return "ERROR";
+    }
+
+    // 5. Balance Check
     const fee = BigInt(tx.gas) * BigInt(tx.gasPrice);
     if (BigInt(tx.amount) + fee > this.getPendingBalance(tx.from)) {
       console.error(
         "addTransaction: Insufficient balance (considering mempool) for amount + fee",
       );
-      return false;
+      return "ERROR";
     }
 
     this.mempool.push(tx);
-    // Sort mempool by gasPrice (descending)
     this.mempool.sort((a, b) =>
       Number(BigInt(b.gasPrice) - BigInt(a.gasPrice)),
     );
-    return true;
+    return "SUCCESS";
   }
 
   applyTransaction(tx) {
     if (!Transaction.verify(tx)) {
       console.error(
-        `applyTransaction: Signature verification failed for ${tx.hash()}`,
+        `applyTransaction: Signature verification failed for ${tx.calculateHash()}`,
       );
       return false;
     }
@@ -144,10 +182,8 @@ export default class Blockchain {
 
     if (tx.type === "TRANSFER") {
       this.balances[tx.to] = this.getBalance(tx.to) + BigInt(tx.amount);
-    } else if (tx.type === "STAKE") {
-      this.stakes[tx.from] = (this.stakes[tx.from] || 0n) + BigInt(tx.amount);
     } else if (tx.type === "CONTRACT_DEPLOY") {
-      const contractAddress = tx.hash();
+      const contractAddress = tx.calculateHash();
       this.contractState[contractAddress] = {
         code: tx.code,
         state: {},
@@ -175,7 +211,54 @@ export default class Blockchain {
     return true;
   }
 
+  registerValidator(address) {
+    this.validators[address] = Date.now();
+  }
+
+  getValidValidators() {
+    const now = Date.now();
+    // Prune stale validators and return active ones
+    return Object.keys(this.validators).filter(
+      (addr) => now - this.validators[addr] < VALIDATOR_TIMEOUT,
+    );
+  }
+
+  selectValidator(seed, currentValidatorAddr = null) {
+    let activeAddresses = this.getValidValidators();
+
+    // Ensure the current node is always a candidate if it just announced
+    if (
+      currentValidatorAddr &&
+      !activeAddresses.includes(currentValidatorAddr)
+    ) {
+      activeAddresses.push(currentValidatorAddr);
+    }
+
+    if (activeAddresses.length === 0) return "GENESIS";
+
+    // Deterministic Sort
+    activeAddresses.sort();
+
+    // Lucky Slot Rotation (Deterministic Shuffle)
+    const seedNum = BigInt("0x" + seed);
+    const winnerIndex = Number(seedNum % BigInt(activeAddresses.length));
+
+    return activeAddresses[winnerIndex];
+  }
+
   async createBlock(validatorWallet) {
+    // 1. Check if this wallet is the scheduled winner
+    const scheduledWinner = this.selectValidator(
+      this.lastBlock().hash,
+      validatorWallet.publicKey,
+    );
+    if (validatorWallet.publicKey !== scheduledWinner) {
+      console.error(
+        `createBlock: You are NOT the scheduled validator. Winner is ${scheduledWinner}`,
+      );
+      return null;
+    }
+
     const MAX_BLOCK_GAS = 1000000n;
     let currentBlockGas = 0n;
     const transactions = [];
@@ -183,6 +266,8 @@ export default class Blockchain {
     for (let i = 0; i < this.mempool.length; i++) {
       const tx = this.mempool[i];
       if (currentBlockGas + BigInt(tx.gas) <= MAX_BLOCK_GAS) {
+        // Attach hash property for persistence/explorer
+        tx.hash = tx.calculateHash();
         transactions.push(tx);
         currentBlockGas += BigInt(tx.gas);
       }
@@ -213,8 +298,26 @@ export default class Blockchain {
       return false;
     }
 
+    // CONSENSUS CHECK: Is the sender the scheduled winner?
+    const scheduledWinner = this.selectValidator(
+      block.lastHash,
+      block.validator,
+    );
+    if (block.validator !== scheduledWinner) {
+      console.error(
+        `addBlock: Block rejected. Validator ${block.validator} is not the scheduled winner (${scheduledWinner})`,
+      );
+      return false;
+    }
+
     let totalFees = 0n;
     for (const tx of block.transactions) {
+      // Safety: Ensure hash is attached for explorer visibility
+      if (!tx.hash) {
+        const txInstance = new Transaction(tx);
+        tx.hash = txInstance.calculateHash();
+      }
+
       if (!this.applyTransaction(tx)) {
         console.error(
           `addBlock: Failed to apply transaction ${tx.hash || "unknown"}`,
@@ -243,10 +346,10 @@ export default class Blockchain {
     // FIX: Clear mempool of transactions in this block
     const blockTxHashes = block.transactions.map((t) => {
       const tx = t instanceof Transaction ? t : new Transaction(t);
-      return tx.hash();
+      return tx.hash || tx.calculateHash();
     });
     this.mempool = this.mempool.filter(
-      (t) => !blockTxHashes.includes(t.hash()),
+      (t) => !blockTxHashes.includes(t.hash || t.calculateHash()),
     );
 
     await this.save();
@@ -258,7 +361,6 @@ export default class Blockchain {
 
     // 1. Reset volatile state
     this.balances = {};
-    this.stakes = {};
     this.nonces = {};
     this.contractState = {};
     this.chain = [this.genesis()]; // Start fresh
@@ -276,9 +378,12 @@ export default class Blockchain {
 
       // Apply transactions
       for (const tx of block.transactions) {
+        // Ensure hash is attached even on rebuild
+        const txInstance = new Transaction(tx);
+        tx.hash = txInstance.calculateHash();
+
         // Force apply without full validation since it's already in the chain
-        // but we still use applyTransaction to update balances/nonces
-        if (!this.applyTransaction(new Transaction(tx))) {
+        if (!this.applyTransaction(txInstance)) {
           console.error(
             `Rebuild failed at block ${i}: Invalid transaction found in chain`,
           );

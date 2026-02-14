@@ -2,7 +2,6 @@ import { WebSocket, WebSocketServer } from "ws";
 import crypto from "crypto";
 import Block from "../core/block.js";
 import Transaction from "../core/transaction.js";
-import { bigIntReplacer } from "../utils/network.js";
 
 export default class Network {
   constructor(blockchain, port, peers = []) {
@@ -80,31 +79,20 @@ export default class Network {
 
     // Handshake: Identify myself and send chain/peers
     ws.send(
-      JSON.stringify(
-        {
-          type: "HANDSHAKE",
-          data: {
-            nodeId: this.nodeId,
-            publicAddr: this.publicAddr,
-          },
+      JSON.stringify({
+        type: "HANDSHAKE",
+        data: {
+          nodeId: this.nodeId,
+          publicAddr: this.publicAddr,
         },
-        bigIntReplacer,
-      ),
+      }),
     );
+    ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
     ws.send(
-      JSON.stringify(
-        { type: "CHAIN", data: this.blockchain.chain },
-        bigIntReplacer,
-      ),
-    );
-    ws.send(
-      JSON.stringify(
-        {
-          type: "PEERS",
-          data: [...this.blockchain.peers, this.publicAddr],
-        },
-        bigIntReplacer,
-      ),
+      JSON.stringify({
+        type: "PEERS",
+        data: [...this.blockchain.peers, this.publicAddr],
+      }),
     );
   }
 
@@ -141,11 +129,19 @@ export default class Network {
       } else if (type === "TRANSACTION") {
         const tx = new Transaction(data);
         const txHash = tx.hash();
-        if (this.blockchain.addTransaction(tx)) {
-          console.log(`P2P: Valid Tx received (${txHash}), broadcasting...`);
+        const result = this.blockchain.addTransaction(tx);
+
+        if (result === "SUCCESS") {
+          console.log(
+            `P2P: Valid Tx received (${txHash.substring(0, 10)}...), broadcasting...`,
+          );
           this.broadcast({ type: "TRANSACTION", data }, ws);
+        } else if (result === "SKIPPED") {
+          // No action needed, avoids log noise
         } else {
-          console.error(`P2P: Incoming Tx rejected (${txHash})`);
+          console.error(
+            `P2P: Incoming Tx rejected (${txHash.substring(0, 10)}...)`,
+          );
         }
       } else if (type === "BLOCK") {
         if (await this.blockchain.addBlock(new Block(data))) {
@@ -156,6 +152,13 @@ export default class Network {
         } else {
           console.error(`P2P: Incoming Block rejected (#${data.index})`);
         }
+      } else if (type === "ANNOUNCE") {
+        const { address } = data;
+        this.blockchain.registerValidator(address);
+        // Relay the announcement to other peers (Broadcasting)
+        // We only relay if it's the first time we see it in this session or seen recently
+        // For simplicity here, we just relay
+        this.broadcast({ type: "ANNOUNCE", data }, ws);
       } else if (type === "PEERS") {
         this.handlePeerDiscovery(data);
       }
@@ -205,7 +208,7 @@ export default class Network {
 
     if (targetSockets.length > 0) {
       console.log(`P2P [BROAD]: ${msg.type} to ${targetSockets.length} peers`);
-      const serializedMsg = JSON.stringify(msg, bigIntReplacer);
+      const serializedMsg = JSON.stringify(msg);
       targetSockets.forEach((s) => s.send(serializedMsg));
     }
   }

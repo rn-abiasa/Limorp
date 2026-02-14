@@ -1,33 +1,52 @@
 import { Level } from "level";
 
-const walletDbPath = process.env.WALLET_DB_PATH || "./db/wallets";
-const db = new Level(walletDbPath, { valueEncoding: "json" });
+const walletDbPath = process.env.WALLET_DB_PATH || "./wallets";
+
+async function withDb(fn) {
+  const db = new Level(walletDbPath, { valueEncoding: "json" });
+  try {
+    return await fn(db);
+  } finally {
+    await db.close();
+  }
+}
 
 export default {
   async saveWallet(name, mnemonic) {
-    let wallets = await this.getWallets();
-    wallets[name] = mnemonic;
-    await db.put("wallets", wallets);
+    return withDb(async (db) => {
+      let wallets = {};
+      try {
+        wallets = await db.get("wallets");
+      } catch (e) {}
+      wallets[name] = mnemonic;
+      await db.put("wallets", wallets);
+    });
   },
 
   async getWallets() {
-    try {
-      return (await db.get("wallets")) || {};
-    } catch {
-      return {};
-    }
+    return withDb(async (db) => {
+      try {
+        return (await db.get("wallets")) || {};
+      } catch {
+        return {};
+      }
+    });
   },
 
   async setActiveWallet(name) {
-    await db.put("active", name);
+    return withDb(async (db) => {
+      await db.put("active", name);
+    });
   },
 
   async getActiveWalletName() {
-    try {
-      return await db.get("active");
-    } catch {
-      return null;
-    }
+    return withDb(async (db) => {
+      try {
+        return await db.get("active");
+      } catch {
+        return null;
+      }
+    });
   },
 
   async getActiveWallet(Wallet) {
@@ -40,6 +59,6 @@ export default {
   },
 
   async close() {
-    await db.close();
+    // No-op for compatibility, DB is closed per-op now
   },
 };

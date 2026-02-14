@@ -14,6 +14,7 @@ export default class Transaction {
     input = null,
     timestamp = null,
     signature = null,
+    hash = null,
     gas = 10n,
     gasPrice = 1n,
   }) {
@@ -26,11 +27,12 @@ export default class Transaction {
     this.input = input;
     this.timestamp = timestamp || Date.now();
     this.signature = signature;
+    this.hash = hash;
     this.gas = BigInt(gas);
     this.gasPrice = BigInt(gasPrice);
   }
 
-  hash() {
+  calculateHash() {
     const txData = {
       from: this.from,
       to: this.to,
@@ -54,7 +56,7 @@ export default class Transaction {
       throw new Error("Failed sign.");
     }
 
-    this.signature = wallet.sign(this.hash());
+    this.signature = wallet.sign(this.calculateHash());
   }
 
   static verify(tx) {
@@ -63,6 +65,6 @@ export default class Transaction {
 
     const txInstance = new Transaction(tx);
     const key = ec.keyFromPublic(tx.from, "hex");
-    return key.verify(txInstance.hash(), tx.signature);
+    return key.verify(txInstance.calculateHash(), tx.signature);
   }
 }
