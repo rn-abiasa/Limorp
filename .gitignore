@@ -42,3 +42,6 @@ explorer/web/dist/
 explorer/web/.env
 explorer
 DOCS
+
+db/chain
+db/wallet

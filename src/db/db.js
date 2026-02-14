@@ -1,6 +1,7 @@
 import { Level } from "level";
 
-const db = new Level("./db/chain", { valueEncoding: "json" });
+const dbPath = process.env.DB_PATH || "./db/chain";
+const db = new Level(dbPath, { valueEncoding: "json" });
 
 export default {
   save: async (state) => {

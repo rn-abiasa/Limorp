@@ -1,6 +1,7 @@
 import { Level } from "level";
 
-const db = new Level("./db/wallets", { valueEncoding: "json" });
+const walletDbPath = process.env.WALLET_DB_PATH || "./db/wallets";
+const db = new Level(walletDbPath, { valueEncoding: "json" });
 
 export default {
   async saveWallet(name, mnemonic) {
