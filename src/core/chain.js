@@ -425,11 +425,30 @@ export default class Blockchain {
   }
 
   isValidChain(chain) {
+    // 1. Check Genesis
+    const genesis = JSON.stringify(this.genesis());
+    if (JSON.stringify(chain[0]) !== genesis) {
+      console.error("isValidChain: Genesis mismatch");
+      return false;
+    }
+
+    // 2. Continuous Verification
     for (let i = 1; i < chain.length; i++) {
       const block = chain[i];
       const lastBlock = chain[i - 1];
-      if (block.lastHash !== lastBlock.hash) return false;
-      // Basic validation of block hash would go here
+
+      // a. Link check
+      if (block.lastHash !== lastBlock.hash) {
+        console.error(`isValidChain: Link mismatch at block ${i}`);
+        return false;
+      }
+
+      // b. Hash integrity check
+      const blockInstance = new Block(block);
+      if (block.hash !== blockInstance.calculateHash()) {
+        console.error(`isValidChain: Hash corruption at block ${i}`);
+        return false;
+      }
     }
 
     return true;

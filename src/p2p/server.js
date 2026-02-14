@@ -17,6 +17,7 @@ export default class Network {
       blockchain.save(); // Persist the new ID
     }
     this.nodeId = blockchain.nodeId;
+    this.validatorAddress = null; // Set by index.js after wallet discovery
 
     console.log(
       `P2P: Server listening on port ${port} (NodeID: ${this.nodeId})`,
@@ -32,6 +33,27 @@ export default class Network {
         this.connectToPeer(peer);
       }
     });
+
+    // Start reconnection loop
+    this.startReconnectionLoop();
+  }
+
+  setValidatorAddress(address) {
+    this.validatorAddress = address;
+  }
+
+  startReconnectionLoop() {
+    setInterval(() => {
+      // Try to reconnect to known peers that are not currently connected
+      this.blockchain.peers.forEach((peer) => {
+        if (
+          peer !== this.publicAddr &&
+          !this.sockets.find((s) => s.remoteUrl === peer)
+        ) {
+          this.connectToPeer(peer);
+        }
+      });
+    }, 15000); // Check every 15 seconds
   }
 
   connectToPeer(url) {
@@ -59,7 +81,7 @@ export default class Network {
       this.blockchain.addPeer(url);
     });
     ws.on("error", () => {
-      // Quietly fail for bootnodes if they are down/self
+      // Quietly fail
     });
   }
 
@@ -94,6 +116,16 @@ export default class Network {
         data: [...this.blockchain.peers, this.publicAddr],
       }),
     );
+
+    // If we have a validator identity, announce it to the new peer immediately
+    if (this.validatorAddress) {
+      ws.send(
+        JSON.stringify({
+          type: "ANNOUNCE",
+          data: { address: this.validatorAddress },
+        }),
+      );
+    }
   }
 
   async message(ws, msg) {

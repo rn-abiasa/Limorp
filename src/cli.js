@@ -25,6 +25,17 @@ async function apiPost(path, body) {
   return res.json();
 }
 
+import { execSync } from "child_process";
+
+function copyToClipboard(text) {
+  try {
+    execSync(`echo "${text}" | pbcopy`);
+    p.log.success("Copied to clipboard!");
+  } catch (err) {
+    p.log.error("Failed to copy to clipboard.");
+  }
+}
+
 async function main() {
   p.intro(color.bgCyan(color.black(" Limorp Blockchain CLI (API-Mode) ")));
 
@@ -72,13 +83,10 @@ async function main() {
     const action = await p.select({
       message: "Main Menu",
       options: [
-        { value: "view", label: "View Active Wallet Details" },
-        { value: "mnemonic", label: "View/Copy Secret Mnemonic" },
-        { value: "transfer", label: "Transfer Funds" },
-        { value: "manage", label: "Manage Wallets (Switch)" },
+        { value: "transfer", label: "Transfer" },
+        { value: "manage", label: "Manage Wallet" },
         { value: "create", label: "Create New Wallet" },
         { value: "import", label: "Import Wallet" },
-        { value: "mine", label: "Produce Block" },
         { value: "exit", label: "Exit" },
       ],
     });
@@ -86,81 +94,6 @@ async function main() {
     if (p.isCancel(action) || action === "exit") break;
 
     switch (action) {
-      case "create": {
-        const name = await p.text({
-          message: "Wallet Name",
-          placeholder: "my-wallet",
-        });
-        if (p.isCancel(name)) break;
-        const { mnemonic, wallet } = Wallet.create();
-        await WalletStore.saveWallet(name, mnemonic);
-        await WalletStore.setActiveWallet(name);
-        p.note(
-          `Mnemonic: ${mnemonic}\nAddress: ${wallet.publicKey}`,
-          "Wallet Created!",
-        );
-        break;
-      }
-
-      case "import": {
-        const name = await p.text({
-          message: "Wallet Name",
-          placeholder: "my-wallet",
-        });
-        if (p.isCancel(name)) break;
-        const mnemonicText = await p.text({ message: "Paste Mnemonic" });
-        if (p.isCancel(mnemonicText)) break;
-        await WalletStore.saveWallet(name, mnemonicText);
-        await WalletStore.setActiveWallet(name);
-        p.log.success("Wallet Imported & Set as Active!");
-        break;
-      }
-
-      case "manage": {
-        const wallets = await WalletStore.getWallets();
-        const names = Object.keys(wallets);
-        if (names.length === 0) {
-          p.log.error("No wallets found.");
-          break;
-        }
-        const selected = await p.select({
-          message: "Select Wallet",
-          options: names.map((n) => ({ value: n, label: n })),
-        });
-        if (p.isCancel(selected)) break;
-        await WalletStore.setActiveWallet(selected);
-        p.log.success(`Active wallet switched to ${selected}`);
-        break;
-      }
-
-      case "view": {
-        if (!activeData) {
-          p.log.error("No active wallet.");
-          break;
-        }
-        const stakes = await apiGet("/stakes");
-        const myStake = stakes[activeAddr] || "0";
-        p.note(
-          `Name: ${activeName}\nAddress: ${activeAddr}\nBalance: ${balance} LMR\nStake: ${myStake} LMR`,
-          "Wallet Details",
-        );
-        break;
-      }
-
-      case "mnemonic": {
-        if (!activeName) {
-          p.log.error("No active wallet.");
-          break;
-        }
-        const wallets = await WalletStore.getWallets();
-        const mnemonic = wallets[activeName];
-        p.note(
-          color.bold(color.green(mnemonic)),
-          `Secret Mnemonic for '${activeName}'`,
-        );
-        break;
-      }
-
       case "transfer": {
         if (!activeData) {
           p.log.error("No active wallet.");
@@ -199,42 +132,72 @@ async function main() {
         break;
       }
 
-      case "mine": {
-        if (!activeAddr) {
-          p.log.error("Please select a wallet first.");
-          break;
-        }
+      case "manage": {
+        const subAction = await p.select({
+          message: `Manage Wallet [${activeName}]`,
+          options: [
+            { value: "view", label: "View Details" },
+            { value: "copy-addr", label: "Copy Address" },
+            { value: "copy-mnem", label: "Copy Mnemonic" },
+            { value: "switch", label: "Switch Active Wallet" },
+            { value: "back", label: "Back to Main" },
+          ],
+        });
 
-        const nextData = await apiGet("/next-validator");
-        if (nextData.winner !== activeAddr) {
-          p.log.warn(
-            color.yellow(
-              `⚠️  It's not your turn! Scheduled winner: ${nextData.winner}`,
-            ),
+        if (p.isCancel(subAction) || subAction === "back") break;
+
+        if (subAction === "view") {
+          p.note(
+            `Name: ${activeName}\nAddress: ${activeAddr}\nBalance: ${balance} LMR`,
+            "Wallet Details",
           );
-          const confirm = await p.confirm({
-            message: "Try producing anyway?",
-            initialValue: false,
+        } else if (subAction === "copy-addr") {
+          copyToClipboard(activeAddr);
+        } else if (subAction === "copy-mnem") {
+          const wallets = await WalletStore.getWallets();
+          const mnemonic = wallets[activeName];
+          copyToClipboard(mnemonic);
+        } else if (subAction === "switch") {
+          const wallets = await WalletStore.getWallets();
+          const names = Object.keys(wallets);
+          const selected = await p.select({
+            message: "Select Wallet",
+            options: names.map((n) => ({ value: n, label: n })),
           });
-          if (p.isCancel(confirm) || !confirm) break;
+          if (p.isCancel(selected)) break;
+          await WalletStore.setActiveWallet(selected);
+          p.log.success(`Active wallet switched to ${selected}`);
         }
+        break;
+      }
 
-        const wallets = await WalletStore.getWallets();
-        const mnemonic = wallets[activeName];
+      case "create": {
+        const name = await p.text({
+          message: "Wallet Name",
+          placeholder: "my-wallet",
+        });
+        if (p.isCancel(name)) break;
+        const { mnemonic, wallet } = Wallet.create();
+        await WalletStore.saveWallet(name, mnemonic);
+        await WalletStore.setActiveWallet(name);
+        p.note(
+          `Mnemonic: ${mnemonic}\nAddress: ${wallet.publicKey}`,
+          "Wallet Created!",
+        );
+        break;
+      }
 
-        p.log.step("Producing block (PoT Mode)...");
-        const result = await apiPost("/mine", { validatorMnemonic: mnemonic });
-
-        if (result.status === "success") {
-          p.log.success(
-            `Block #${result.data.index} accepted! Hash: ${result.data.hash.slice(0, 10)}...`,
-          );
-        } else {
-          p.log.error(`Mining failed: ${result.message}`);
-          if (result.winner) {
-            p.log.info(`Correct winner should be: ${result.winner}`);
-          }
-        }
+      case "import": {
+        const name = await p.text({
+          message: "Wallet Name",
+          placeholder: "my-wallet",
+        });
+        if (p.isCancel(name)) break;
+        const mnemonicText = await p.text({ message: "Paste Mnemonic" });
+        if (p.isCancel(mnemonicText)) break;
+        await WalletStore.saveWallet(name, mnemonicText);
+        await WalletStore.setActiveWallet(name);
+        p.log.success("Wallet Imported & Set as Active!");
         break;
       }
     }

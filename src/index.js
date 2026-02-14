@@ -53,6 +53,7 @@ async function startMiningLoop() {
   if (validatorMnemonic) {
     const wallet = Wallet.import(validatorMnemonic);
     console.log(`PoT: Automated validator active for ${wallet.publicKey}`);
+    p2p.setValidatorAddress(wallet.publicKey);
 
     // IDENTITY ANNOUNCEMENT (PoT Heartbeat)
     // Broadcast identity every 30s to stay in the Lucky Slot pool
