@@ -12,6 +12,7 @@ export default class Blockchain {
     this.mempool = [];
     this.contractState = {};
     this.peers = [];
+    this.nodeId = null; // To be loaded or generated
   }
 
   async init() {
@@ -27,6 +28,7 @@ export default class Blockchain {
       this.nonces = saved.nonces;
       this.contractState = saved.contractState;
       this.peers = saved.peers || [];
+      this.nodeId = saved.nodeId || null;
       console.log("Blockchain state loaded from disk.");
     }
   }
@@ -39,6 +41,7 @@ export default class Blockchain {
       nonces: this.nonces,
       contractState: this.contractState,
       peers: this.peers,
+      nodeId: this.nodeId,
     });
   }
 
@@ -46,7 +49,7 @@ export default class Blockchain {
     return new Block({
       index: 0,
       lastHash: "0",
-      timestamp: Date.now(),
+      timestamp: 1739530000000, // Fixed timestamp for network-wide consensus
       transactions: [],
       validator: "GENESIS",
     });
@@ -111,14 +114,29 @@ export default class Blockchain {
   }
 
   applyTransaction(tx) {
-    if (!Transaction.verify(tx)) return false;
+    if (!Transaction.verify(tx)) {
+      console.error(
+        `applyTransaction: Signature verification failed for ${tx.hash()}`,
+      );
+      return false;
+    }
 
     // Nonce check
     const currentNonce = this.getNonce(tx.from);
-    if (tx.from !== "SYSTEM" && tx.nonce !== currentNonce) return false;
+    if (tx.from !== "SYSTEM" && tx.nonce !== currentNonce) {
+      console.error(
+        `applyTransaction: Nonce mismatch for ${tx.from}. Expected ${currentNonce}, got ${tx.nonce}`,
+      );
+      return false;
+    }
 
     const fee = BigInt(tx.gas) * BigInt(tx.gasPrice);
-    if (this.getBalance(tx.from) < BigInt(tx.amount) + fee) return false;
+    if (this.getBalance(tx.from) < BigInt(tx.amount) + fee) {
+      console.error(
+        `applyTransaction: Insufficient balance for ${tx.from}. Required ${BigInt(tx.amount) + fee}, has ${this.getBalance(tx.from)}`,
+      );
+      return false;
+    }
 
     // Deduct total (amount + fee) from sender
     this.balances[tx.from] =
@@ -136,13 +154,16 @@ export default class Blockchain {
       };
     } else if (tx.type === "CONTRACT_CALL") {
       const contract = this.contractState[tx.to];
-      if (!contract) return false;
+      if (!contract) {
+        console.error(`applyTransaction: Contract not found at ${tx.to}`);
+        return false;
+      }
 
       try {
         const newState = runContract(contract.code, contract.state, tx.input);
         this.contractState[tx.to].state = newState;
       } catch (e) {
-        console.error("Contract execution failed:", e);
+        console.error(`applyTransaction: Contract execution failed:`, e);
         return false;
       }
     }
@@ -185,11 +206,21 @@ export default class Blockchain {
   }
 
   async addBlock(block) {
-    if (block.lastHash !== this.lastBlock().hash) return false;
+    if (block.lastHash !== this.lastBlock().hash) {
+      console.error(
+        `addBlock: Hash mismatch. Expected ${this.lastBlock().hash.substring(0, 10)}..., got ${block.lastHash.substring(0, 10)}...`,
+      );
+      return false;
+    }
 
     let totalFees = 0n;
     for (const tx of block.transactions) {
-      if (!this.applyTransaction(tx)) return false;
+      if (!this.applyTransaction(tx)) {
+        console.error(
+          `addBlock: Failed to apply transaction ${tx.hash || "unknown"}`,
+        );
+        return false;
+      }
       totalFees += BigInt(tx.gas) * BigInt(tx.gasPrice);
     }
 

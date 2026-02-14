@@ -11,8 +11,13 @@ export default class Network {
     this.server = new WebSocketServer({ port });
     this.server.on("connection", (ws) => this.connect(ws));
 
-    // Generate a unique Identity for this node (Non-persistent for now)
-    this.nodeId = crypto.randomBytes(8).toString("hex");
+    // Persistent identity
+    if (!blockchain.nodeId) {
+      blockchain.nodeId = crypto.randomBytes(8).toString("hex");
+      blockchain.save(); // Persist the new ID
+    }
+    this.nodeId = blockchain.nodeId;
+
     console.log(
       `P2P: Server listening on port ${port} (NodeID: ${this.nodeId})`,
     );
