@@ -43,3 +43,9 @@ DOCS/
 
 # Databases
 db/
+
+test-validation.js
+verify.js
+verify_persistence.js
+
+explorer
