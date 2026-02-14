@@ -38,10 +38,8 @@ yarn-error.log*
 *.sw?
 
 # Project Specific
-explorer/web/dist/
-explorer/web/.env
-explorer
-DOCS
+explorer/
+DOCS/
 
-db/chain
-db/wallet
+# Databases
+db/
