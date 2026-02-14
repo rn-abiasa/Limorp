@@ -1,5 +1,7 @@
 import { WebSocket, WebSocketServer } from "ws";
+import crypto from "crypto";
 import Block from "../core/block.js";
+import Transaction from "../core/transaction.js"; // In case needed, but already has Block
 
 export default class Network {
   constructor(blockchain, port, peers = []) {
@@ -8,9 +10,14 @@ export default class Network {
     this.sockets = [];
     this.server = new WebSocketServer({ port });
     this.server.on("connection", (ws) => this.connect(ws));
-    console.log(`P2P: Server listening on port ${port}`);
 
-    // My own address (simplified, assuming localhost for now or provided via env/arg)
+    // Generate a unique Identity for this node (Non-persistent for now)
+    this.nodeId = crypto.randomBytes(8).toString("hex");
+    console.log(
+      `P2P: Server listening on port ${port} (NodeID: ${this.nodeId})`,
+    );
+
+    // My own address (dynamically determined later if possible)
     this.publicAddr = process.env.PUBLIC_ADDR || `ws://localhost:${port}`;
 
     // Connect to initial peers AND saved peers from database
@@ -25,17 +32,30 @@ export default class Network {
   connectToPeer(url) {
     // Avoid connecting to self or already connected peers
     if (url === this.publicAddr) return;
+
+    // Check if the URL is just another name for localhost/myself
+    const isLocal =
+      url.includes("localhost") ||
+      url.includes("127.0.0.1") ||
+      url.includes("0.0.0.0");
+    const samePort = url.endsWith(`:${this.port}`);
+
+    if ((isLocal && samePort) || url === this.publicAddr) {
+      return; // Absolute skip for self-connections
+    }
+
     if (this.sockets.find((s) => s.remoteUrl === url)) return;
 
     const ws = new WebSocket(url);
     ws.on("open", () => {
       ws.remoteUrl = url; // Use custom property to avoid conflict
-      console.log(`P2P: Successfully connected to peer: ${url}`);
       this.connect(ws);
       // Save successfully connected peer to DB
       this.blockchain.addPeer(url);
     });
-    ws.on("error", () => console.log(`Failed to connect to peer: ${url}`));
+    ws.on("error", () => {
+      // Quietly fail for bootnodes if they are down/self
+    });
   }
 
   connect(ws) {
@@ -53,7 +73,15 @@ export default class Network {
     });
 
     // Handshake: Identify myself and send chain/peers
-    ws.send(JSON.stringify({ type: "HANDSHAKE", data: this.publicAddr }));
+    ws.send(
+      JSON.stringify({
+        type: "HANDSHAKE",
+        data: {
+          nodeId: this.nodeId,
+          publicAddr: this.publicAddr,
+        },
+      }),
+    );
     ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
     ws.send(
       JSON.stringify({
@@ -69,13 +97,28 @@ export default class Network {
       console.log(`P2P [INCOM]: ${type} from ${ws.remoteUrl || "unknown"}`);
 
       if (type === "HANDSHAKE") {
-        if (data === this.publicAddr) {
-          console.log("P2P: Connection to self detected, closing socket...");
+        const { nodeId, publicAddr } = data;
+
+        // 1. Identity Check: Avoid self-connection
+        if (nodeId === this.nodeId) {
           ws.close();
           return;
         }
-        ws.remoteUrl = data;
-        console.log(`P2P: Peer identified as ${data}`);
+
+        // 2. Already connected to this identity?
+        const duplicate = this.sockets.find(
+          (s) => s.nodeId === nodeId && s !== ws,
+        );
+        if (duplicate) {
+          ws.close();
+          return;
+        }
+
+        ws.nodeId = nodeId;
+        ws.remoteUrl = publicAddr;
+        console.log(
+          `P2P: Authorized connection from ${publicAddr} (ID: ${nodeId})`,
+        );
       } else if (type === "CHAIN") {
         await this.syncChain(data, ws);
       } else if (type === "TRANSACTION") {
