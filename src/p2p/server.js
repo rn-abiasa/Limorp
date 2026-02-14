@@ -23,11 +23,11 @@ export default class Network {
   connectToPeer(url) {
     // Avoid connecting to self or already connected peers
     if (url === this.publicAddr) return;
-    if (this.sockets.find((s) => s.url === url)) return;
+    if (this.sockets.find((s) => s.remoteUrl === url)) return;
 
     const ws = new WebSocket(url);
     ws.on("open", () => {
-      ws.url = url; // Store target URL for tracking
+      ws.remoteUrl = url; // Use custom property to avoid conflict
       this.connect(ws);
       // Save successfully connected peer to DB
       this.blockchain.addPeer(url);
