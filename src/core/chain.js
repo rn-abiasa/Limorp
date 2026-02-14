@@ -1,0 +1,233 @@
+import Block from "./block.js";
+import Transaction from "./transaction.js";
+import { runContract } from "./vm.js";
+import db from "../db/db.js";
+
+export default class Blockchain {
+  constructor() {
+    this.chain = [this.genesis()];
+    this.balances = {};
+    this.stakes = {};
+    this.nonces = {};
+    this.mempool = [];
+    this.contractState = {};
+    this.peers = [];
+  }
+
+  async init() {
+    const saved = await db.load();
+    if (saved) {
+      this.chain = saved.chain.map((b) => new Block(b));
+      this.balances = Object.fromEntries(
+        Object.entries(saved.balances).map(([k, v]) => [k, BigInt(v)]),
+      );
+      this.stakes = Object.fromEntries(
+        Object.entries(saved.stakes).map(([k, v]) => [k, BigInt(v)]),
+      );
+      this.nonces = saved.nonces;
+      this.contractState = saved.contractState;
+      this.peers = saved.peers || [];
+      console.log("Blockchain state loaded from disk.");
+    }
+  }
+
+  async save() {
+    await db.save({
+      chain: this.chain,
+      balances: this.balances,
+      stakes: this.stakes,
+      nonces: this.nonces,
+      contractState: this.contractState,
+      peers: this.peers,
+    });
+  }
+
+  genesis() {
+    return new Block({
+      index: 0,
+      lastHash: "0",
+      timestamp: Date.now(),
+      transactions: [],
+      validator: "GENESIS",
+    });
+  }
+
+  lastBlock() {
+    return this.chain[this.chain.length - 1];
+  }
+
+  getBalance(address) {
+    return this.balances[address] || 0n;
+  }
+
+  getNonce(address) {
+    return this.nonces[address] || 0;
+  }
+
+  getPendingNonce(address) {
+    const mempoolTxs = this.mempool.filter((tx) => tx.from === address);
+    if (mempoolTxs.length === 0) return this.getNonce(address);
+    const maxNonce = Math.max(...mempoolTxs.map((tx) => tx.nonce));
+    return maxNonce + 1;
+  }
+
+  getPendingBalance(address) {
+    const confirmedBalance = this.getBalance(address);
+    const pendingSpent = this.mempool
+      .filter((tx) => tx.from === address)
+      .reduce((sum, tx) => {
+        const fee = BigInt(tx.gas) * BigInt(tx.gasPrice);
+        return sum + BigInt(tx.amount) + fee;
+      }, 0n);
+    return confirmedBalance - pendingSpent;
+  }
+
+  addTransaction(tx) {
+    if (!Transaction.verify(tx)) {
+      console.error("addTransaction: Verification failed");
+      return false;
+    }
+    if (tx.nonce !== this.getPendingNonce(tx.from)) {
+      console.error(
+        `addTransaction: Nonce mismatch. Expected ${this.getPendingNonce(tx.from)}, got ${tx.nonce}`,
+      );
+      return false;
+    }
+    const fee = BigInt(tx.gas) * BigInt(tx.gasPrice);
+    if (BigInt(tx.amount) + fee > this.getPendingBalance(tx.from)) {
+      console.error(
+        "addTransaction: Insufficient balance (considering mempool) for amount + fee",
+      );
+      return false;
+    }
+
+    this.mempool.push(tx);
+    // Sort mempool by gasPrice (descending)
+    this.mempool.sort((a, b) =>
+      Number(BigInt(b.gasPrice) - BigInt(a.gasPrice)),
+    );
+    return true;
+  }
+
+  applyTransaction(tx) {
+    if (!Transaction.verify(tx)) return false;
+
+    // Nonce check
+    const currentNonce = this.getNonce(tx.from);
+    if (tx.from !== "SYSTEM" && tx.nonce !== currentNonce) return false;
+
+    const fee = BigInt(tx.gas) * BigInt(tx.gasPrice);
+    if (this.getBalance(tx.from) < BigInt(tx.amount) + fee) return false;
+
+    // Deduct total (amount + fee) from sender
+    this.balances[tx.from] =
+      this.getBalance(tx.from) - (BigInt(tx.amount) + fee);
+
+    if (tx.type === "TRANSFER") {
+      this.balances[tx.to] = this.getBalance(tx.to) + BigInt(tx.amount);
+    } else if (tx.type === "STAKE") {
+      this.stakes[tx.from] = (this.stakes[tx.from] || 0n) + BigInt(tx.amount);
+    } else if (tx.type === "CONTRACT_DEPLOY") {
+      const contractAddress = tx.hash();
+      this.contractState[contractAddress] = {
+        code: tx.code,
+        state: {},
+      };
+    } else if (tx.type === "CONTRACT_CALL") {
+      const contract = this.contractState[tx.to];
+      if (!contract) return false;
+
+      try {
+        const newState = runContract(contract.code, contract.state, tx.input);
+        this.contractState[tx.to].state = newState;
+      } catch (e) {
+        console.error("Contract execution failed:", e);
+        return false;
+      }
+    }
+
+    if (tx.from !== "SYSTEM") {
+      this.nonces[tx.from] = currentNonce + 1;
+    }
+
+    return true;
+  }
+
+  async createBlock(validatorWallet) {
+    const MAX_BLOCK_GAS = 1000000n;
+    let currentBlockGas = 0n;
+    const transactions = [];
+
+    for (let i = 0; i < this.mempool.length; i++) {
+      const tx = this.mempool[i];
+      if (currentBlockGas + BigInt(tx.gas) <= MAX_BLOCK_GAS) {
+        transactions.push(tx);
+        currentBlockGas += BigInt(tx.gas);
+      }
+    }
+
+    // Remove selected transactions from mempool
+    this.mempool = this.mempool.filter((tx) => !transactions.includes(tx));
+
+    const block = new Block({
+      index: this.chain.length,
+      lastHash: this.lastBlock().hash,
+      timestamp: Date.now(),
+      transactions,
+      validator: validatorWallet.publicKey,
+    });
+
+    if (await this.addBlock(block)) {
+      return block;
+    }
+    return null;
+  }
+
+  async addBlock(block) {
+    if (block.lastHash !== this.lastBlock().hash) return false;
+
+    let totalFees = 0n;
+    for (const tx of block.transactions) {
+      if (!this.applyTransaction(tx)) return false;
+      totalFees += BigInt(tx.gas) * BigInt(tx.gasPrice);
+    }
+
+    // Anti-Inflation: Reward Halving (every 100 blocks)
+    const halvingInterval = 100;
+    const halvings = Math.floor(block.index / halvingInterval);
+    const baseReward = 50n;
+    const currentReward = baseReward / BigInt(Math.pow(2, halvings)) || 0n;
+
+    // Anti-Inflation: Fee Burning (50% burn, validator gets 50%)
+    const validatorFeeShare = totalFees / 2n;
+
+    this.balances[block.validator] =
+      (this.balances[block.validator] || 0n) +
+      currentReward +
+      validatorFeeShare;
+
+    this.chain.push(block);
+    await this.save();
+    return true;
+  }
+
+  addPeer(peer) {
+    if (!this.peers.includes(peer)) {
+      this.peers.push(peer);
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  isValidChain(chain) {
+    for (let i = 1; i < chain.length; i++) {
+      const block = chain[i];
+      const lastBlock = chain[i - 1];
+      if (block.lastHash !== lastBlock.hash) return false;
+      // Basic validation of block hash would go here
+    }
+
+    return true;
+  }
+}
