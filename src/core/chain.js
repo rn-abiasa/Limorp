@@ -82,14 +82,15 @@ export default class Blockchain {
     return confirmedBalance - pendingSpent;
   }
 
-  addTransaction(tx) {
+  addTransaction(txData) {
+    const tx = txData instanceof Transaction ? txData : new Transaction(txData);
     if (!Transaction.verify(tx)) {
       console.error("addTransaction: Verification failed");
       return false;
     }
     if (tx.nonce !== this.getPendingNonce(tx.from)) {
       console.error(
-        `addTransaction: Nonce mismatch. Expected ${this.getPendingNonce(tx.from)}, got ${tx.nonce}`,
+        `addTransaction: Nonce mismatch for ${tx.from}. Expected ${this.getPendingNonce(tx.from)}, got ${tx.nonce}`,
       );
       return false;
     }
@@ -207,6 +208,16 @@ export default class Blockchain {
       validatorFeeShare;
 
     this.chain.push(block);
+
+    // FIX: Clear mempool of transactions in this block
+    const blockTxHashes = block.transactions.map((t) => {
+      const tx = t instanceof Transaction ? t : new Transaction(t);
+      return tx.hash();
+    });
+    this.mempool = this.mempool.filter(
+      (t) => !blockTxHashes.includes(t.hash()),
+    );
+
     await this.save();
     return true;
   }

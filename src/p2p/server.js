@@ -69,23 +69,30 @@ export default class Network {
       console.log(`P2P [INCOM]: ${type} from ${ws.remoteUrl || "unknown"}`);
 
       if (type === "HANDSHAKE") {
+        if (data === this.publicAddr) {
+          console.log("P2P: Connection to self detected, closing socket...");
+          ws.close();
+          return;
+        }
         ws.remoteUrl = data;
         console.log(`P2P: Peer identified as ${data}`);
       } else if (type === "CHAIN") {
         await this.syncChain(data, ws);
       } else if (type === "TRANSACTION") {
-        if (this.blockchain.addTransaction(data)) {
-          console.log(`P2P: Valid Tx received (${data.hash}), broadcasting...`);
-          this.broadcast({ type: "TRANSACTION", data });
+        const tx = new Transaction(data);
+        const txHash = tx.hash();
+        if (this.blockchain.addTransaction(tx)) {
+          console.log(`P2P: Valid Tx received (${txHash}), broadcasting...`);
+          this.broadcast({ type: "TRANSACTION", data }, ws);
         } else {
-          console.error(`P2P: Incoming Tx rejected (${data.hash})`);
+          console.error(`P2P: Incoming Tx rejected (${txHash})`);
         }
       } else if (type === "BLOCK") {
         if (await this.blockchain.addBlock(new Block(data))) {
           console.log(
             `P2P: Valid Block received (#${data.index}), broadcasting...`,
           );
-          this.broadcast({ type: "BLOCK", data });
+          this.broadcast({ type: "BLOCK", data }, ws);
         } else {
           console.error(`P2P: Incoming Block rejected (#${data.index})`);
         }
@@ -117,7 +124,7 @@ export default class Network {
       );
       const success = await this.blockchain.rebuildFrom(incomingChain);
       if (success) {
-        this.broadcast({ type: "CHAIN", data: this.blockchain.chain });
+        this.broadcast({ type: "CHAIN", data: this.blockchain.chain }, ws);
       }
     } else {
       console.log(
@@ -126,12 +133,19 @@ export default class Network {
     }
   }
 
-  broadcast(msg) {
-    console.log(`P2P [BROAD]: ${msg.type} to ${this.sockets.length} peers`);
-    this.sockets.forEach((s) => {
-      if (s.readyState === WebSocket.OPEN) {
-        s.send(JSON.stringify(msg));
-      }
+  broadcast(msg, originWs = null) {
+    const targetSockets = this.sockets.filter((s) => {
+      // 1. Don't send back to the sender (origin)
+      if (s === originWs) return false;
+      // 2. Don't send to ourselves
+      if (s.remoteUrl === this.publicAddr) return false;
+      // 3. Must be open
+      return s.readyState === WebSocket.OPEN;
     });
+
+    if (targetSockets.length > 0) {
+      console.log(`P2P [BROAD]: ${msg.type} to ${targetSockets.length} peers`);
+      targetSockets.forEach((s) => s.send(JSON.stringify(msg)));
+    }
   }
 }
