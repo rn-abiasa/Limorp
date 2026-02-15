@@ -63,29 +63,21 @@ export default class Network {
     ws.on("message", (msg) => this.handler.handle(ws, msg));
     ws.on("close", () => this.connections.removeSocket(ws));
 
-    // Send Handshake
+    // Send STATUS (Production-style handshake)
     ws.send(
       JSON.stringify({
-        type: "HANDSHAKE",
+        type: "STATUS",
         data: {
           nodeId: this.nodeId,
           publicAddr: this.publicAddr,
           height: this.blockchain.chain.length,
+          lastHash: this.blockchain.lastBlock().hash,
         },
-      }),
-    );
-
-    // Send Chain & Peers
-    ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
-    ws.send(
-      JSON.stringify({
-        type: "PEERS",
-        data: [...this.blockchain.peers, this.publicAddr],
       }),
     );
   }
 
-  finalizeHandshake(ws, data) {
+  handleStatus(ws, data) {
     if (data.nodeId === this.nodeId) {
       ws.close();
       return;
@@ -93,16 +85,13 @@ export default class Network {
     ws.nodeId = data.nodeId;
     ws.remoteUrl = data.publicAddr;
     ws.height = data.height || 0;
+    ws.lastHash = data.lastHash;
 
     // Trigger sync check
     this.sync.checkSync(ws);
-  }
 
-  broadcastMempool() {
-    this.broadcast({
-      type: "MEMPOOL",
-      data: this.blockchain.mempool,
-    });
+    // Discovery auto-add
+    if (ws.remoteUrl) this.discovery.addPeer(ws.remoteUrl);
   }
 
   broadcast(msg, originWs = null) {

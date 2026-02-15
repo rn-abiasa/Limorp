@@ -232,7 +232,16 @@ export default class Blockchain {
   }
 
   async addBlock(block) {
-    if (block.lastHash !== this.lastBlock().hash) return false;
+    if (block.index !== this.chain.length) {
+      console.error(
+        `Chain: Index mismatch. Expected ${this.chain.length}, got ${block.index}`,
+      );
+      return false;
+    }
+    if (block.lastHash !== this.lastBlock().hash) {
+      console.error(`Chain: LastHash mismatch in block #${block.index}`);
+      return false;
+    }
 
     const scheduledWinner = this.consensus.selectValidator(
       block.lastHash,

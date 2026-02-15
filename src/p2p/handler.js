@@ -9,26 +9,21 @@ export default class MessageHandler {
 
   async handle(ws, msg) {
     const { type, data } = JSON.parse(msg);
-    // console.log(`P2P [INCOM]: ${type} from ${ws.remoteUrl || "unknown"}`);
 
     switch (type) {
-      case "HANDSHAKE":
-        this.network.finalizeHandshake(ws, data);
+      case "STATUS":
+        this.network.handleStatus(ws, data);
         break;
-      case "CHAIN":
-        // Fallback for legacy full chain sync if needed, but we prefer incremental
-        await this.network.sync.syncChain(data, ws);
-        break;
+
       case "REQUEST_BLOCK":
         this.handleRequestBlock(data, ws);
         break;
+
       case "BLOCK_RESPONSE":
         await this.network.sync.handleBlockResponse(data, ws);
         break;
-      case "MEMPOOL":
-        this.handleMempoolSync(data);
-        break;
-      case "REQUEST_MEMPOOL":
+
+      case "GET_MEMPOOL":
         ws.send(
           JSON.stringify({
             type: "MEMPOOL",
@@ -36,18 +31,26 @@ export default class MessageHandler {
           }),
         );
         break;
+
+      case "MEMPOOL":
+        this.handleMempoolSync(data);
+        break;
+
       case "TRANSACTION":
-        if (this.network.isSyncing) break; // Ignore during sync
+        if (this.network.isSyncing) break;
         this.handleTransaction(data, ws);
         break;
+
       case "BLOCK":
-        if (this.network.isSyncing) break; // Ignore during sync
+        if (this.network.isSyncing) break;
         await this.handleBlock(data, ws);
         break;
+
       case "ANNOUNCE":
         this.blockchain.registerValidator(data.address);
         this.network.broadcast({ type: "ANNOUNCE", data }, ws);
         break;
+
       case "PEERS":
         this.network.discovery.handlePeerDiscovery(data);
         break;
@@ -62,9 +65,7 @@ export default class MessageHandler {
   }
 
   handleMempoolSync(transactions) {
-    if (this.network.isSyncing) return;
     if (!transactions || !Array.isArray(transactions)) return;
-
     transactions.forEach((txData) => {
       this.blockchain.addTransaction(txData);
     });
