@@ -74,7 +74,11 @@ export default class MessageHandler {
 
   handleMempoolSync(transactions) {
     if (!transactions || !Array.isArray(transactions)) return;
-    transactions.forEach((txData) => {
+
+    // Sort by nonce to ensure strict sequential processing
+    const sortedTxs = [...transactions].sort((a, b) => a.nonce - b.nonce);
+
+    sortedTxs.forEach((txData) => {
       this.blockchain.addTransaction(txData);
     });
   }
