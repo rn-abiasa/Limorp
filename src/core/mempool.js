@@ -5,6 +5,10 @@ export default class Mempool {
 
   add(tx) {
     // Deduplication
+    if (!tx.hash) {
+      console.error("Mempool: Attempted to add transaction without hash", tx);
+      return "ERROR";
+    }
     if (this.transactions.some((t) => t.hash === tx.hash)) {
       return "SKIPPED";
     }

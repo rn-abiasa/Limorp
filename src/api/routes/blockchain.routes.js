@@ -11,12 +11,12 @@ router.get("/mempool", (req, res) => {
 });
 
 router.get("/balance/:address", (req, res) => {
-  const balance = req.chain.getBalance(req.params.address);
+  const balance = req.chain.getPendingBalance(req.params.address);
   res.json({ address: req.params.address, balance: balance.toString() });
 });
 
 router.get("/nonce/:address", (req, res) => {
-  const nonce = req.chain.getNonce(req.params.address);
+  const nonce = req.chain.getPendingNonce(req.params.address);
   res.json({ address: req.params.address, nonce });
 });
 

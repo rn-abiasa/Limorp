@@ -102,6 +102,9 @@ export default class Blockchain {
     if (BigInt(tx.amount) + BigInt(tx.fee) > this.getPendingBalance(tx.from))
       return "ERROR";
 
+    // Set hash before adding to mempool
+    tx.hash = tx.hash || tx.calculateHash();
+
     return this.mempoolManager.add(tx);
   }
 
