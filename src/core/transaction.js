@@ -32,10 +32,10 @@ export default class Transaction {
   }
 
   static verify(tx) {
-    if (!tx.from || !tx.to || tx.amount === undefined || tx.nonce === undefined)
-      return false;
     if (tx.from === "SYSTEM") return true;
 
+    if (!tx.from || !tx.to || tx.amount === undefined || tx.nonce === undefined)
+      return false;
     if (!tx.signature || tx.signature.length === 0) return false;
 
     const key = ec.keyFromPublic(tx.from, "hex");
@@ -43,6 +43,7 @@ export default class Transaction {
       .createHash("sha256")
       .update(`${tx.from}${tx.to}${tx.amount}${tx.nonce}${tx.fee || 0}`)
       .digest("hex");
+
     return key.verify(hash, tx.signature);
   }
 }

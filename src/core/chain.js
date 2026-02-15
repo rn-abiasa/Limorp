@@ -137,198 +137,153 @@ export default class Blockchain {
   }
 
   applyTransaction(tx) {
-    if (!Transaction.verify(tx)) return false;
-
-    const currentNonce = this.getNonce(tx.from);
-    if (tx.from !== "SYSTEM" && tx.nonce !== currentNonce) return false;
-
-    const amount = tx.amount !== undefined ? BigInt(tx.amount) : 0n;
-    const fee = tx.fee !== undefined ? BigInt(tx.fee) : 0n;
-
-    if (tx.type !== "REWARD") {
-      if (this.getBalance(tx.from) < amount + fee) return false;
-      this.state.updateBalance(tx.from, -(amount + fee));
+    if (!Transaction.verify(tx)) {
+      console.log(
+        `ApplyTx Fail: Signature/Verification failed for tx ${tx.hash?.slice(0, 10)}`,
+      );
+      return false;
     }
 
-    if (
-      tx.type === "TRANSFER" ||
-      tx.type === "CONTRACT_CALL" ||
-      tx.type === "REWARD"
-    ) {
-      this.state.updateBalance(tx.to, amount);
+    const from = tx.from;
+    const to = tx.to;
+    const amount = BigInt(tx.amount || 0n);
+    const fee = BigInt(tx.fee || 0n);
+    const currentNonce = this.getNonce(from);
+
+    // Standard Tx Checks
+    if (from !== "SYSTEM") {
+      if (tx.nonce !== currentNonce || this.getBalance(from) < amount + fee)
+        return false;
+      this.state.updateBalance(from, -(amount + fee));
+      this.state.setNonce(from, currentNonce + 1);
+    }
+
+    // Transfers & Smart Contracts
+    if (["TRANSFER", "CONTRACT_CALL", "REWARD"].includes(tx.type)) {
+      this.state.updateBalance(to, amount);
     }
 
     if (tx.type === "CONTRACT_DEPLOY") {
-      const contractAddress = tx.calculateHash();
       try {
-        const initialState = runContract(tx.code, {}, tx.input, tx.from, 0n);
-        this.state.setContract(contractAddress, {
+        const initialState = runContract(tx.code, {}, tx.input, from, 0n);
+        this.state.setContract(tx.calculateHash(), {
           code: tx.code,
           state: initialState,
-          metadata: { creator: tx.from, timestamp: Date.now() },
+          metadata: { creator: from, timestamp: Date.now() },
         });
       } catch (e) {
-        console.error(`Deployment failed:`, e.message);
-        return true;
+        console.error(`Contract Deploy Fail:`, e.message);
       }
     } else if (tx.type === "CONTRACT_CALL") {
-      const contract = this.state.getContract(tx.to);
+      const contract = this.state.getContract(to);
       if (!contract) return false;
       try {
         const newState = runContract(
           contract.code,
           contract.state,
           tx.input,
-          tx.from,
+          from,
           amount,
         );
-        this.state.contractState[tx.to].state = newState;
+        this.state.contractState[to].state = newState;
       } catch (e) {
-        console.error(`Execution failed:`, e.message);
-        return true;
+        console.error(`Contract Call Fail:`, e.message);
       }
     }
 
-    if (tx.from !== "SYSTEM") {
-      this.state.setNonce(tx.from, currentNonce + 1);
-    }
     return true;
   }
 
   async createBlock(validatorWallet) {
-    const scheduledWinner = this.consensus.selectValidator(
-      this.lastBlock().hash,
-      validatorWallet.publicKey,
-    );
-    if (validatorWallet.publicKey !== scheduledWinner) return null;
+    const last = this.lastBlock();
+    if (
+      validatorWallet.publicKey !==
+      this.selectValidator(last.hash, validatorWallet.publicKey)
+    )
+      return null;
 
-    const MAX_BLOCK_TXS = 50;
-    const mempoolTxs = this.mempoolManager.getSorted();
-    const validTransactions = [];
-    const toxicHashes = [];
+    const validTxs = [],
+      toxic = [];
+    const offsets = { nonce: {}, balance: {} };
 
-    // Tally offsets for simulation
-    const nonceOffsets = {};
-    const balanceOffsets = {};
-
-    for (const tx of mempoolTxs) {
-      if (validTransactions.length >= MAX_BLOCK_TXS) break;
-
+    for (const tx of this.mempoolManager.getSorted()) {
+      if (validTxs.length >= 50) break;
       const from = tx.from;
-      const currentNonce = this.getNonce(from) + (nonceOffsets[from] || 0);
-      const currentBalance =
-        this.getBalance(from) - (balanceOffsets[from] || 0n);
+      const nonce = this.getNonce(from) + (offsets.nonce[from] || 0);
+      const balance = this.getBalance(from) - (offsets.balance[from] || 0n);
+      const cost = BigInt(tx.amount || 0n) + BigInt(tx.fee || 0n);
 
-      const amount = BigInt(tx.amount || 0n);
-      const fee = BigInt(tx.fee || 0n);
-
-      // Simulation check
-      let isValid = true;
-      if (tx.nonce !== currentNonce) isValid = false;
-      if (amount + fee > currentBalance) isValid = false;
-      if (!Transaction.verify(tx)) isValid = false;
-
-      if (isValid) {
-        tx.hash = tx.hash || tx.calculateHash();
-        validTransactions.push(tx);
-        nonceOffsets[from] = (nonceOffsets[from] || 0) + 1;
-        balanceOffsets[from] = (balanceOffsets[from] || 0n) + amount + fee;
+      if (tx.nonce === nonce && cost <= balance && Transaction.verify(tx)) {
+        validTxs.push(tx);
+        offsets.nonce[from] = (offsets.nonce[from] || 0) + 1;
+        offsets.balance[from] = (offsets.balance[from] || 0n) + cost;
       } else {
-        tx.hash = tx.hash || tx.calculateHash();
-        console.warn(
-          `Miner: Skipping toxic transaction ${tx.hash.slice(0, 10)} from ${from.slice(0, 10)}`,
-        );
-        toxicHashes.push(tx.hash);
+        toxic.push(tx.hash || tx.calculateHash());
       }
     }
 
-    // Clean up mempool from toxic transactions
-    if (toxicHashes.length > 0) {
-      this.mempoolManager.remove(toxicHashes);
-    }
+    if (toxic.length) this.mempoolManager.remove(toxic);
 
     const block = new Block({
       index: this.chain.length,
-      lastHash: this.lastBlock().hash,
+      lastHash: last.hash,
       timestamp: Date.now(),
-      transactions: validTransactions,
+      transactions: validTxs,
       validator: validatorWallet.publicKey,
     });
 
-    if (await this.addBlock(block)) return block;
-    return null;
+    return (await this.addBlock(block)) ? block : null;
   }
 
   async addBlock(block) {
-    if (block.index !== this.chain.length) {
-      console.error(
-        `Chain: Index mismatch. Expected ${this.chain.length}, got ${block.index}`,
-      );
+    const last = this.lastBlock();
+    if (block.index !== this.chain.length || block.lastHash !== last.hash)
       return false;
-    }
-    if (block.lastHash !== this.lastBlock().hash) {
-      console.error(
-        `Chain: LastHash mismatch in block #${block.index}. Local: ${this.lastBlock().hash.slice(0, 10)}, Block: ${block.lastHash.slice(0, 10)}`,
-      );
+    if (block.validator !== this.selectValidator(last.hash, block.validator))
       return false;
-    }
 
-    const scheduledWinner = this.consensus.selectValidator(
-      block.lastHash,
-      block.validator,
+    let fees = 0n;
+    const blockTxs = block.transactions.map((t) =>
+      t instanceof Transaction ? t : new Transaction(t),
     );
-    if (block.validator !== scheduledWinner) return false;
 
-    let totalFees = 0n;
-    let existingRewardTx = null;
-
-    for (const txData of block.transactions) {
-      const tx =
-        txData instanceof Transaction ? txData : new Transaction(txData);
-      if (tx.type === "REWARD") {
-        existingRewardTx = tx;
-        continue;
-      }
-
-      tx.hash = tx.hash || tx.calculateHash();
-      if (!this.applyTransaction(tx)) {
-        console.error(
-          `Miner: Transaction ${tx.hash.slice(0, 10)} is toxic! Failed to apply.`,
-        );
-        return false;
-      }
-      totalFees += BigInt(tx.fee || 0n);
+    // Process standard txs
+    for (const tx of blockTxs) {
+      if (tx.type === "REWARD") continue;
+      if (!this.applyTransaction(tx)) return false;
+      fees += BigInt(tx.fee || 0n);
     }
 
-    const currentReward = this.economy.getReward(block.index);
-    const validatorFeeShare = this.economy.calculateFeeSplit(totalFees);
-    const expectedRewardAmount = currentReward + validatorFeeShare;
-
-    if (existingRewardTx) {
-      if (BigInt(existingRewardTx.amount) !== expectedRewardAmount)
-        return false;
-      this.applyTransaction(existingRewardTx);
-    } else {
-      const rewardTx = new Transaction({
+    // Handle Reward
+    const rewardAmount =
+      this.economy.getReward(block.index) +
+      this.economy.calculateFeeSplit(fees);
+    const rewardTx =
+      blockTxs.find((t) => t.type === "REWARD") ||
+      new Transaction({
         from: "SYSTEM",
         to: block.validator,
-        amount: expectedRewardAmount,
+        amount: rewardAmount,
         fee: 0n,
         type: "REWARD",
         timestamp: block.timestamp,
       });
-      rewardTx.hash = rewardTx.calculateHash();
-      this.applyTransaction(rewardTx);
+
+    if (
+      BigInt(rewardTx.amount) !== rewardAmount ||
+      !this.applyTransaction(rewardTx)
+    )
+      return false;
+
+    if (!block.transactions.find((t) => t.type === "REWARD")) {
       block.transactions.unshift(rewardTx);
       block.hash = new Block(block).calculateHash();
     }
 
     this.chain.push(block);
-
-    // Clear mempool
-    const blockHashes = block.transactions.map((tx) => tx.hash);
-    this.mempoolManager.remove(blockHashes);
-
+    this.mempoolManager.remove(
+      block.transactions.map((t) => t.hash || t.calculateHash()),
+    );
     await this.save();
     return true;
   }

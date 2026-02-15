@@ -14,9 +14,6 @@ export default class SyncManager {
 
     if (peerHeight > localHeight) {
       this.startSync(ws, peerHeight);
-    } else {
-      // Already synced or ahead, just update mempool
-      ws.send(JSON.stringify({ type: "GET_MEMPOOL" }));
     }
   }
 
@@ -94,8 +91,5 @@ export default class SyncManager {
     this.syncPeer = null;
 
     console.log(`P2P: Sync finished at height ${this.blockchain.chain.length}`);
-
-    // Request mempool after chain is synced
-    this.network.broadcast({ type: "GET_MEMPOOL" });
   }
 }

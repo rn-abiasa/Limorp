@@ -1,6 +1,6 @@
 export default class Economy {
   constructor() {
-    this.halvingInterval = 10000;
+    this.halvingInterval = 5000;
     this.baseReward = 2000n;
   }
 
