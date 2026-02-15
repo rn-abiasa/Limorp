@@ -7,7 +7,7 @@ router.get("/validators", (req, res) => {
   res.json(
     addresses.map((addr) => ({
       address: addr,
-      lastSeen: req.chain.consensus.validators[addr],
+      lastSeen: req.chain.validators[addr],
       active: true,
     })),
   );
@@ -23,7 +23,7 @@ router.get("/stats", (req, res) => {
     0,
   );
   const activeValidators = req.chain.getValidValidators().length;
-  const circulatingSupply = Object.values(req.chain.state.balances).reduce(
+  const circulatingSupply = Object.values(req.chain.balances).reduce(
     (sum, val) => sum + val,
     0n,
   );

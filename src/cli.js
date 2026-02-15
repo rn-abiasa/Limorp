@@ -29,10 +29,20 @@ import { execSync } from "child_process";
 
 function copyToClipboard(text) {
   try {
-    execSync(`echo "${text}" | pbcopy`);
+    if (process.platform === "darwin") {
+      execSync(`echo "${text}" | pbcopy`);
+    } else {
+      // Try Termux clipboard first, then xclip
+      try {
+        execSync(`echo "${text}" | termux-clipboard-set`);
+      } catch {
+        execSync(`echo "${text}" | xclip -selection clipboard`);
+      }
+    }
     p.log.success("Copied to clipboard!");
   } catch (err) {
-    p.log.error("Failed to copy to clipboard.");
+    p.log.warn("Auto-copy failed. Please copy this manually:");
+    console.log(color.bold(color.cyan(text)));
   }
 }
 

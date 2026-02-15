@@ -4,7 +4,7 @@ export default class Economy {
     this.baseReward = 2000n;
   }
 
-  getBlockReward(index) {
+  getReward(index) {
     const halvings = Math.floor(index / this.halvingInterval);
     return this.baseReward / BigInt(Math.pow(2, halvings)) || 0n;
   }

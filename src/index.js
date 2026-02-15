@@ -73,10 +73,16 @@ async function startMiningLoop() {
         );
 
         if (wallet.publicKey === scheduledWinner) {
-          // Hanya produksi blok jika ada transaksi di mempool
-          if (chain.mempool.length > 0) {
+          // Hanya produksi blok jika ada transaksi di mempool atau dalam masa bootstrap (< 500 blok)
+          const isBootstrap = chain.chain.length < 500;
+          if (chain.mempool.length > 0 || isBootstrap) {
+            const reason =
+              isBootstrap && chain.mempool.length === 0
+                ? "(Bootstrap Phase - Empty Block)"
+                : `with ${chain.mempool.length} transactions`;
+
             console.log(
-              `PoT: It's my turn! Producing block #${chain.chain.length} with ${chain.mempool.length} transactions...`,
+              `PoT: It's my turn! Producing block #${chain.chain.length} ${reason}...`,
             );
             const block = await chain.createBlock(wallet);
             if (block) {
