@@ -175,19 +175,55 @@ export default class Blockchain {
     if (validatorWallet.publicKey !== scheduledWinner) return null;
 
     const MAX_BLOCK_TXS = 50;
-    const transactions = this.mempoolManager
-      .getSorted()
-      .slice(0, MAX_BLOCK_TXS)
-      .map((tx) => {
-        tx.hash = tx.calculateHash();
-        return tx;
-      });
+    const mempoolTxs = this.mempoolManager.getSorted();
+    const validTransactions = [];
+    const toxicHashes = [];
+
+    // Tally offsets for simulation
+    const nonceOffsets = {};
+    const balanceOffsets = {};
+
+    for (const tx of mempoolTxs) {
+      if (validTransactions.length >= MAX_BLOCK_TXS) break;
+
+      const from = tx.from;
+      const currentNonce = this.getNonce(from) + (nonceOffsets[from] || 0);
+      const currentBalance =
+        this.getBalance(from) - (balanceOffsets[from] || 0n);
+
+      const amount = BigInt(tx.amount || 0n);
+      const fee = BigInt(tx.fee || 0n);
+
+      // Simulation check
+      let isValid = true;
+      if (tx.nonce !== currentNonce) isValid = false;
+      if (amount + fee > currentBalance) isValid = false;
+      if (!Transaction.verify(tx)) isValid = false;
+
+      if (isValid) {
+        tx.hash = tx.hash || tx.calculateHash();
+        validTransactions.push(tx);
+        nonceOffsets[from] = (nonceOffsets[from] || 0) + 1;
+        balanceOffsets[from] = (balanceOffsets[from] || 0n) + amount + fee;
+      } else {
+        tx.hash = tx.hash || tx.calculateHash();
+        console.warn(
+          `Miner: Skipping toxic transaction ${tx.hash.slice(0, 10)} from ${from.slice(0, 10)}`,
+        );
+        toxicHashes.push(tx.hash);
+      }
+    }
+
+    // Clean up mempool from toxic transactions
+    if (toxicHashes.length > 0) {
+      this.mempoolManager.remove(toxicHashes);
+    }
 
     const block = new Block({
       index: this.chain.length,
       lastHash: this.lastBlock().hash,
       timestamp: Date.now(),
-      transactions,
+      transactions: validTransactions,
       validator: validatorWallet.publicKey,
     });
 
@@ -216,7 +252,12 @@ export default class Blockchain {
       }
 
       tx.hash = tx.hash || tx.calculateHash();
-      if (!this.applyTransaction(tx)) return false;
+      if (!this.applyTransaction(tx)) {
+        console.error(
+          `Miner: Transaction ${tx.hash.slice(0, 10)} is toxic! Failed to apply.`,
+        );
+        return false;
+      }
       totalFees += BigInt(tx.fee || 0n);
     }
 

@@ -8,7 +8,7 @@ import Transaction from "./src/core/transaction.js";
 
 // --- KONFIGURASI ---
 const BOT_COUNT = 20; // Jumlah bot
-const AGGRESSIVENESS = 10; // 1 (santai) - 10 (agresif)
+const AGGRESSIVENESS = 20; // 1 (santai) - 10 (agresif)
 const API_URL = "http://localhost:4000";
 const MIN_TRANSFER_AMOUNT = 1n; // Jumlah transfer minimal (LMR)
 const MAX_TRANSFER_AMOUNT = 100n; // Jumlah transfer maksimal (LMR)
