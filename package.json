@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon src/index.js",
-    "cli": "node src/cli.js"
+    "start": "node src/index",
+    "dev": "nodemon src/index",
+    "cli": "node src/cli"
   },
   "author": "limorpdev",
   "license": "ISC",

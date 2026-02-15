@@ -15,8 +15,7 @@ export default class Transaction {
     timestamp = null,
     signature = null,
     hash = null,
-    gas = 10n,
-    gasPrice = 1n,
+    fee = 1n,
   }) {
     this.from = from;
     this.to = to;
@@ -28,8 +27,7 @@ export default class Transaction {
     this.timestamp = timestamp || Date.now();
     this.signature = signature;
     this.hash = hash;
-    this.gas = BigInt(gas);
-    this.gasPrice = BigInt(gasPrice);
+    this.fee = BigInt(fee);
   }
 
   calculateHash() {
@@ -42,8 +40,7 @@ export default class Transaction {
       code: this.code,
       input: this.input,
       timestamp: this.timestamp,
-      gas: this.gas.toString(),
-      gasPrice: this.gasPrice.toString(),
+      fee: this.fee.toString(),
     };
     return crypto
       .createHash("sha256")

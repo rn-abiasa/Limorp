@@ -39,7 +39,6 @@ console.log(
 
 // Automated Block Production Loop (PoS/PoT Evolution)
 async function startMiningLoop() {
-  // 1. Discover Validator Identity
   if (!validatorMnemonic) {
     try {
       const wallets = await WalletStore.getWallets();
@@ -56,19 +55,17 @@ async function startMiningLoop() {
     p2p.setValidatorAddress(wallet.publicKey);
 
     // IDENTITY ANNOUNCEMENT (PoT Heartbeat)
-    // Broadcast identity every 30s to stay in the Lucky Slot pool
     setInterval(() => {
       chain.registerValidator(wallet.publicKey);
       p2p.broadcast({ type: "ANNOUNCE", data: { address: wallet.publicKey } });
     }, 30000);
+
     // Initial announcement
     chain.registerValidator(wallet.publicKey);
     p2p.broadcast({ type: "ANNOUNCE", data: { address: wallet.publicKey } });
 
     setInterval(async () => {
       try {
-        // Tetap produksi blok meskipun mempool kosong untuk minting reward
-
         const lastHash = chain.lastBlock().hash;
         const scheduledWinner = chain.selectValidator(
           lastHash,
@@ -77,22 +74,23 @@ async function startMiningLoop() {
 
         if (wallet.publicKey === scheduledWinner) {
           // Hanya produksi blok jika ada transaksi di mempool
-          if (chain.mempool.length === 0) {
+          if (chain.mempool.length > 0) {
+            console.log(
+              `PoT: It's my turn! Producing block #${chain.chain.length} with ${chain.mempool.length} transactions...`,
+            );
+            const block = await chain.createBlock(wallet);
+            if (block) {
+              p2p.broadcast({ type: "BLOCK", data: block });
+              console.log(
+                `PoT: Block #${block.index} produced and broadcasted.`,
+              );
+            }
+          } else {
             if (Math.random() < 0.05) {
               console.log(
                 "PoT: It's my turn, but mempool is empty. Skipping block production.",
               );
             }
-            return;
-          }
-
-          console.log(
-            `PoT: It's my turn! Producing block #${chain.chain.length} with ${chain.mempool.length} transactions...`,
-          );
-          const block = await chain.createBlock(wallet);
-          if (block) {
-            p2p.broadcast({ type: "BLOCK", data: block });
-            console.log(`PoT: Block #${block.index} produced and broadcasted.`);
           }
         } else {
           // Diagnostic log (10% chance to avoid spam)
@@ -105,7 +103,7 @@ async function startMiningLoop() {
       } catch (err) {
         console.error("PoT: Automated block production failed:", err.message);
       }
-    }, 10000); // Check every 10 seconds
+    }, 10000);
   } else {
     console.log("PoT: Running in Observer Mode (No identity found).");
     setTimeout(startMiningLoop, 30000);

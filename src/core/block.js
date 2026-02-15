@@ -13,7 +13,8 @@ export default class Block {
   calculateHash() {
     const transactionsData = this.transactions.map((tx) => ({
       ...tx,
-      amount: tx.amount.toString(),
+      amount: tx.amount?.toString() || "0",
+      fee: tx.fee?.toString() || "0",
     }));
     return crypto
       .createHash("sha256")

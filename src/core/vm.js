@@ -1,57 +1,51 @@
 import vm from "vm";
 
 export function runContract(code, state, input, sender, value) {
-  // 1. Persiapkan Sandbox
-  const sandbox = { console };
+  // 1. Persiapkan Sandbox dengan State yang ada
+  // State otomatis menjadi variabel global di dalam kontrak
+  const sandbox = {
+    console,
+    msg: {
+      sender,
+      value,
+      input,
+    },
+    ...state,
+  };
+
   vm.createContext(sandbox);
 
-  // 2. Jalankan kode untuk mendefinisikan Class
-  vm.runInContext(code, sandbox);
+  // 2. Jalankan Kode Kontrak
+  try {
+    vm.runInContext(code, sandbox);
 
-  // 3. Cari Class yang didefinisikan (ambil yang pertama ditemukan)
-  const ContractClass = Object.values(sandbox).find(
-    (v) =>
-      typeof v === "function" && v.prototype && v.prototype.constructor === v,
-  );
-
-  if (!ContractClass) {
-    throw new Error("No Class definition found in contract code.");
-  }
-
-  // 4. Instansiasi dan Inject State + Context
-  const instance = new ContractClass();
-
-  // Masukkan state yang ada ke dalam instance properties
-  Object.assign(instance, state);
-
-  // Masukkan sistem properties (readonly/utility)
-  instance.sender = sender;
-  instance.value = value;
-  instance.input = input;
-
-  // 5. Dispatch Method
-  if (input && input.method && typeof instance[input.method] === "function") {
-    const params = input.params || [];
-    instance[input.method](...params);
-  }
-
-  // 6. Harvesting: Ambil semua property (bukan fungsi) sebagai state baru
-  const newState = {};
-  const systemKeys = ["sender", "value", "input"]; // Key yang tidak boleh masuk ke state permanen
-
-  for (const key of Object.getOwnPropertyNames(instance)) {
-    if (systemKeys.includes(key)) continue;
-    if (typeof instance[key] === "function") continue;
-    newState[key] = instance[key];
-  }
-
-  // Tambahkan property yang mungkin menempel di instance (untuk ES6 classes)
-  for (const key in instance) {
-    if (systemKeys.includes(key)) continue;
-    if (typeof instance[key] === "function") continue;
-    if (!newState.hasOwnProperty(key)) {
-      newState[key] = instance[key];
+    // Auto-init for new deployments (empty state)
+    if (Object.keys(state).length === 0 && typeof sandbox.init === "function") {
+      sandbox.init();
     }
+  } catch (e) {
+    throw new Error(`Execution Error: ${e.message}`);
+  }
+
+  // 3. Panggil Method jika ada
+  if (input && input.method && typeof sandbox[input.method] === "function") {
+    const params = input.params || [];
+    try {
+      sandbox[input.method](...params);
+    } catch (e) {
+      throw new Error(`Method Error [${input.method}]: ${e.message}`);
+    }
+  }
+
+  // 4. Harvesting State: Ambil semua variabel global (kecuali sistem & fungsi)
+  const newState = {};
+  const systemKeys = ["console", "msg"];
+
+  for (const key in sandbox) {
+    if (systemKeys.includes(key)) continue;
+    if (typeof sandbox[key] === "function") continue;
+
+    newState[key] = sandbox[key];
   }
 
   return newState;

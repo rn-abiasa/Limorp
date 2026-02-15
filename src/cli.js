@@ -104,13 +104,13 @@ async function main() {
         const amountStr = await p.text({ message: "Amount" });
         if (p.isCancel(amountStr)) break;
 
-        const gasData = await apiGet("/gas-price");
-        const gasPriceStr = await p.text({
-          message: "Gas Price (higher = faster)",
-          placeholder: gasData.suggestedGasPrice,
-          initialValue: gasData.suggestedGasPrice,
+        const minFeeData = await apiGet("/min-fee");
+        const feeStr = await p.text({
+          message: "Transaction Fee (higher = priority)",
+          placeholder: minFeeData.minFee,
+          initialValue: minFeeData.minFee,
         });
-        if (p.isCancel(gasPriceStr)) break;
+        if (p.isCancel(feeStr)) break;
 
         const nonceData = await apiGet(`/nonce/${activeAddr}`);
 
@@ -119,7 +119,7 @@ async function main() {
           to,
           amount: BigInt(amountStr),
           nonce: nonceData.nonce,
-          gasPrice: BigInt(gasPriceStr),
+          fee: BigInt(feeStr),
         });
         tx.sign(activeData.wallet);
 
