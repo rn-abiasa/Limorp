@@ -76,8 +76,18 @@ async function startMiningLoop() {
         );
 
         if (wallet.publicKey === scheduledWinner) {
+          // Hanya produksi blok jika ada transaksi di mempool
+          if (chain.mempool.length === 0) {
+            if (Math.random() < 0.05) {
+              console.log(
+                "PoT: It's my turn, but mempool is empty. Skipping block production.",
+              );
+            }
+            return;
+          }
+
           console.log(
-            `PoT: It's my turn! Producing block #${chain.chain.length}...`,
+            `PoT: It's my turn! Producing block #${chain.chain.length} with ${chain.mempool.length} transactions...`,
           );
           const block = await chain.createBlock(wallet);
           if (block) {

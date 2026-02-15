@@ -160,7 +160,7 @@ export default class Network {
         await this.syncChain(data, ws);
       } else if (type === "TRANSACTION") {
         const tx = new Transaction(data);
-        const txHash = tx.hash();
+        const txHash = tx.calculateHash();
         const result = this.blockchain.addTransaction(tx);
 
         if (result === "SUCCESS") {

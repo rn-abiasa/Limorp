@@ -68,6 +68,10 @@ export default function startAPI({ chain, p2p }, port = 4000) {
       0,
     );
     const activeValidators = req.chain.getValidValidators().length;
+    const circulatingSupply = Object.values(req.chain.balances).reduce(
+      (sum, val) => sum + val,
+      0n,
+    );
 
     res.json({
       height: req.chain.chain.length,
@@ -76,6 +80,7 @@ export default function startAPI({ chain, p2p }, port = 4000) {
       mempoolSize: req.chain.mempool.length,
       halvingInterval: 100, // Hardcoded or from chain
       nodes: req.chain.peers.length + 1, // Peers + self
+      circulatingSupply: circulatingSupply.toString(),
     });
   });
 

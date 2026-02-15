@@ -180,13 +180,17 @@ export default class Blockchain {
     this.balances[tx.from] =
       this.getBalance(tx.from) - (BigInt(tx.amount) + fee);
 
-    if (tx.type === "TRANSFER") {
+    if (tx.type === "TRANSFER" || tx.type === "CONTRACT_CALL") {
       this.balances[tx.to] = this.getBalance(tx.to) + BigInt(tx.amount);
-    } else if (tx.type === "CONTRACT_DEPLOY") {
+    }
+
+    if (tx.type === "CONTRACT_DEPLOY") {
       const contractAddress = tx.calculateHash();
+      // Jalankan sekali tanpa method untuk menangkap initial state (variabel global)
+      const initialState = runContract(tx.code, {}, null, tx.from, 0n);
       this.contractState[contractAddress] = {
         code: tx.code,
-        state: {},
+        state: initialState,
       };
     } else if (tx.type === "CONTRACT_CALL") {
       const contract = this.contractState[tx.to];
@@ -196,7 +200,13 @@ export default class Blockchain {
       }
 
       try {
-        const newState = runContract(contract.code, contract.state, tx.input);
+        const newState = runContract(
+          contract.code,
+          contract.state,
+          tx.input,
+          tx.from,
+          BigInt(tx.amount),
+        );
         this.contractState[tx.to].state = newState;
       } catch (e) {
         console.error(`applyTransaction: Contract execution failed:`, e);
