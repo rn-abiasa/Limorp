@@ -5,6 +5,11 @@ import MessageHandler from "./handler.js";
 import DiscoveryManager from "./discovery.js";
 import SyncManager from "./sync.js";
 
+// BigInt serialization fix for P2P messages
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
+
 export default class Network {
   constructor(blockchain, port, peers = []) {
     this.blockchain = blockchain;
@@ -23,7 +28,8 @@ export default class Network {
     this.connections = new ConnectionManager(port, (ws) => this.onConnect(ws));
     this.handler = new MessageHandler(this, blockchain);
     this.discovery = new DiscoveryManager(this, blockchain, this.publicAddr);
-    this.sync = new SyncManager(blockchain);
+    this.sync = new SyncManager(this, blockchain);
+    this.isSyncing = false;
 
     // Initial Connections
     const allPeers = [...new Set([...peers, ...blockchain.peers])];
@@ -61,7 +67,11 @@ export default class Network {
     ws.send(
       JSON.stringify({
         type: "HANDSHAKE",
-        data: { nodeId: this.nodeId, publicAddr: this.publicAddr },
+        data: {
+          nodeId: this.nodeId,
+          publicAddr: this.publicAddr,
+          height: this.blockchain.chain.length,
+        },
       }),
     );
 
@@ -82,6 +92,17 @@ export default class Network {
     }
     ws.nodeId = data.nodeId;
     ws.remoteUrl = data.publicAddr;
+    ws.height = data.height || 0;
+
+    // Trigger sync check
+    this.sync.checkSync(ws);
+  }
+
+  broadcastMempool() {
+    this.broadcast({
+      type: "MEMPOOL",
+      data: this.blockchain.mempool,
+    });
   }
 
   broadcast(msg, originWs = null) {

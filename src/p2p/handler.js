@@ -16,14 +16,32 @@ export default class MessageHandler {
         this.network.finalizeHandshake(ws, data);
         break;
       case "CHAIN":
-        await this.network.sync.syncChain(data, ws, (m, o) =>
-          this.network.broadcast(m, o),
+        // Fallback for legacy full chain sync if needed, but we prefer incremental
+        await this.network.sync.syncChain(data, ws);
+        break;
+      case "REQUEST_BLOCK":
+        this.handleRequestBlock(data, ws);
+        break;
+      case "BLOCK_RESPONSE":
+        await this.network.sync.handleBlockResponse(data, ws);
+        break;
+      case "MEMPOOL":
+        this.handleMempoolSync(data);
+        break;
+      case "REQUEST_MEMPOOL":
+        ws.send(
+          JSON.stringify({
+            type: "MEMPOOL",
+            data: this.blockchain.mempoolManager.transactions,
+          }),
         );
         break;
       case "TRANSACTION":
+        if (this.network.isSyncing) break; // Ignore during sync
         this.handleTransaction(data, ws);
         break;
       case "BLOCK":
+        if (this.network.isSyncing) break; // Ignore during sync
         await this.handleBlock(data, ws);
         break;
       case "ANNOUNCE":
@@ -34,6 +52,22 @@ export default class MessageHandler {
         this.network.discovery.handlePeerDiscovery(data);
         break;
     }
+  }
+
+  handleRequestBlock(index, ws) {
+    const block = this.blockchain.chain[index];
+    if (block) {
+      ws.send(JSON.stringify({ type: "BLOCK_RESPONSE", data: block }));
+    }
+  }
+
+  handleMempoolSync(transactions) {
+    if (this.network.isSyncing) return;
+    if (!transactions || !Array.isArray(transactions)) return;
+
+    transactions.forEach((txData) => {
+      this.blockchain.addTransaction(txData);
+    });
   }
 
   handleTransaction(data, ws) {

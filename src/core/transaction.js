@@ -1,67 +1,48 @@
 import crypto from "crypto";
-import EC from "elliptic";
-
-const ec = new EC.ec("secp256k1");
+import pkg from "elliptic";
+const { ec: EC } = pkg;
+const ec = new EC("secp256k1");
 
 export default class Transaction {
-  constructor({
-    from,
-    to,
-    amount,
-    nonce = 0,
-    type = "TRANSFER",
-    code = null,
-    input = null,
-    timestamp = null,
-    signature = null,
-    hash = null,
-    fee = 1n,
-  }) {
-    this.from = from;
-    this.to = to;
-    this.amount = BigInt(amount);
-    this.nonce = nonce;
-    this.type = type;
-    this.code = code;
-    this.input = input;
-    this.timestamp = timestamp || Date.now();
-    this.signature = signature;
-    this.hash = hash;
-    this.fee = BigInt(fee);
+  constructor(data) {
+    this.from = data.from;
+    this.to = data.to;
+    this.amount = data.amount !== undefined ? BigInt(data.amount) : 0n;
+    this.nonce = data.nonce;
+    this.fee = data.fee !== undefined ? BigInt(data.fee) : 0n;
+    this.type = data.type || "TRANSFER";
+    this.hash = data.hash;
+    this.signature = data.signature;
   }
 
   calculateHash() {
-    const txData = {
-      from: this.from,
-      to: this.to,
-      amount: this.amount.toString(),
-      nonce: this.nonce,
-      type: this.type,
-      code: this.code,
-      input: this.input,
-      timestamp: this.timestamp,
-      fee: this.fee.toString(),
-    };
     return crypto
       .createHash("sha256")
-      .update(JSON.stringify(txData))
+      .update(
+        `${this.from}${this.to}${this.amount}${this.nonce}${this.fee || 0}`,
+      )
       .digest("hex");
   }
 
   sign(wallet) {
-    if (wallet.publicKey !== this.from) {
-      throw new Error("Failed sign.");
-    }
-
-    this.signature = wallet.sign(this.calculateHash());
+    if (wallet.publicKey !== this.from) return;
+    this.hash = this.calculateHash();
+    const sig = wallet.keyPair.sign(this.hash);
+    this.signature = sig.toDER("hex");
   }
 
   static verify(tx) {
+    if (!tx.from || !tx.to || tx.amount === undefined || tx.nonce === undefined)
+      return false;
     if (tx.from === "SYSTEM") return true;
-    if (!tx.signature) return false;
 
-    const txInstance = new Transaction(tx);
+    if (!tx.signature || tx.signature.length === 0) return false;
+
     const key = ec.keyFromPublic(tx.from, "hex");
-    return key.verify(txInstance.calculateHash(), tx.signature);
+    const hash = crypto
+      .createHash("sha256")
+      .update(`${tx.from}${tx.to}${tx.amount}${tx.nonce}${tx.fee || 0}`)
+      .digest("hex");
+    return key.verify(hash, tx.signature);
   }
 }
