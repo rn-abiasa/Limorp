@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node src/index",
     "dev": "nodemon src/index",
-    "cli": "node src/cli"
+    "cli": "node src/cli",
+    "tunnel": "bash start-tunnel.sh"
   },
   "author": "limorpdev",
   "license": "ISC",
