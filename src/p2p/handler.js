@@ -15,6 +15,14 @@ export default class MessageHandler {
         this.network.handleStatus(ws, data);
         break;
 
+      case "REQUEST_CHAIN":
+        ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
+        break;
+
+      case "CHAIN":
+        await this.network.sync.handleFullChainResponse(data, ws);
+        break;
+
       case "REQUEST_BLOCK":
         this.handleRequestBlock(data, ws);
         break;

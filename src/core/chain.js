@@ -85,22 +85,50 @@ export default class Blockchain {
   addTransaction(txData) {
     const tx = txData instanceof Transaction ? txData : new Transaction(txData);
 
-    if (!Transaction.verify(tx)) return "ERROR";
-
-    // Nonce check
-    const currentNonce = this.getNonce(tx.from);
-    if (tx.nonce < currentNonce) return "SKIPPED";
-
-    const expectedNonce = this.getPendingNonce(tx.from);
-    if (tx.nonce !== expectedNonce) return "ERROR";
-
-    // Fee check
-    const minFee = this.getMinFee();
-    if (BigInt(tx.fee) < minFee) return "ERROR";
-
-    // Balance check
-    if (BigInt(tx.amount) + BigInt(tx.fee) > this.getPendingBalance(tx.from))
+    // 1. Basic Structure & Cryptographic Verification
+    if (!Transaction.verify(tx)) {
+      console.warn(
+        `Mempool: Invalid signature or structure for tx ${tx.hash?.slice(0, 10)}`,
+      );
       return "ERROR";
+    }
+
+    // 2. Nonce Check (Against Confirmed State)
+    const currentNonce = this.getNonce(tx.from);
+    if (tx.nonce < currentNonce) {
+      console.warn(
+        `Mempool: Nonce too low for ${tx.from?.slice(0, 10)}. Got ${tx.nonce}, expected >= ${currentNonce}`,
+      );
+      return "SKIPPED";
+    }
+
+    // 3. Nonce Check (Against Pending Mempool)
+    const expectedNonce = this.getPendingNonce(tx.from);
+    if (tx.nonce !== expectedNonce) {
+      console.warn(
+        `Mempool: Nonce mismatch for ${tx.from?.slice(0, 10)}. Got ${tx.nonce}, expected ${expectedNonce}`,
+      );
+      return "ERROR";
+    }
+
+    // 4. Fee Check
+    const minFee = this.getMinFee();
+    if (BigInt(tx.fee) < minFee) {
+      console.warn(`Mempool: Fee too low. Got ${tx.fee}, min ${minFee}`);
+      return "ERROR";
+    }
+
+    // 5. Balance Check (Against Pending Balance)
+    const amount = BigInt(tx.amount || 0n);
+    const fee = BigInt(tx.fee || 0n);
+    const pendingBalance = this.getPendingBalance(tx.from);
+
+    if (amount + fee > pendingBalance) {
+      console.warn(
+        `Mempool: Insufficient pending balance for ${tx.from?.slice(0, 10)}. Need ${amount + fee}, have ${pendingBalance}`,
+      );
+      return "ERROR";
+    }
 
     // Set hash before adding to mempool
     tx.hash = tx.hash || tx.calculateHash();
@@ -239,7 +267,9 @@ export default class Blockchain {
       return false;
     }
     if (block.lastHash !== this.lastBlock().hash) {
-      console.error(`Chain: LastHash mismatch in block #${block.index}`);
+      console.error(
+        `Chain: LastHash mismatch in block #${block.index}. Local: ${this.lastBlock().hash.slice(0, 10)}, Block: ${block.lastHash.slice(0, 10)}`,
+      );
       return false;
     }
 

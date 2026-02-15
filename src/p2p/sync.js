@@ -51,9 +51,41 @@ export default class SyncManager {
     if (await this.blockchain.addBlock(block)) {
       this.requestNextBlock();
     } else {
-      console.error(`P2P: Sync failed at block #${blockData.index}`);
-      this.finishSync();
+      // FORK DETECTION
+      const localLastHash = this.blockchain.lastBlock().hash;
+      if (block.lastHash !== localLastHash) {
+        console.warn(
+          `P2P: Fork detected at block #${blockData.index}. Requesting full chain for recovery...`,
+        );
+        ws.send(JSON.stringify({ type: "REQUEST_CHAIN" }));
+      } else {
+        console.error(
+          `P2P: Sync failed at block #${blockData.index} for other reasons.`,
+        );
+        this.finishSync();
+      }
     }
+  }
+
+  async handleFullChainResponse(newChainData, ws) {
+    if (!this.network.isSyncing || this.syncPeer !== ws) return;
+
+    console.log(
+      `P2P: Received full chain from peer (${newChainData.length} blocks). Attempting rebuild...`,
+    );
+
+    // Safety: Only rebuild if the new chain is actually longer
+    if (newChainData.length > this.blockchain.chain.length) {
+      const success = await this.blockchain.rebuildFrom(newChainData);
+      if (success) {
+        console.log("P2P: Successfully recovered from fork via rebuild.");
+      } else {
+        console.error(
+          "P2P: Failed to rebuild from peer chain. History might be invalid.",
+        );
+      }
+    }
+    this.finishSync();
   }
 
   finishSync() {
