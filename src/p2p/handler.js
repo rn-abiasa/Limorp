@@ -7,48 +7,47 @@ export default class MessageHandler {
     this.blockchain = blockchain;
   }
 
-  async handle(ws, msg) {
-    const { type, data } = JSON.parse(msg);
-    const sync = this.network.sync;
+  async handle(socket, data) {
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch (e) {
+      console.error("P2P: Failed to parse message", e.message);
+      return;
+    }
+
+    const { type, data: payload } = msg;
 
     switch (type) {
-      case "STATUS":
-        this.network.handleStatus(ws, data);
-        break;
-      case "REQUEST_CHAIN":
-        ws.send(JSON.stringify({ type: "CHAIN", data: this.blockchain.chain }));
-        break;
-      case "CHAIN":
-        await sync.handleFullChainResponse(data, ws);
-        break;
-      case "REQUEST_BLOCK":
-        const block = this.blockchain.chain[data];
-        if (block)
-          ws.send(JSON.stringify({ type: "BLOCK_RESPONSE", data: block }));
-        break;
-      case "BLOCK_RESPONSE":
-        await sync.handleBlockResponse(data, ws);
-        break;
       case "TRANSACTION":
         if (
           !this.network.isSyncing &&
-          this.blockchain.addTransaction(data) === "SUCCESS"
-        )
-          this.network.broadcast({ type: "TRANSACTION", data }, ws);
+          this.blockchain.addTransaction(payload) === "SUCCESS"
+        ) {
+          // Re-broadcast to other peers
+          this.network.broadcast(msg);
+        }
         break;
       case "BLOCK":
-        if (
-          !this.network.isSyncing &&
-          (await this.blockchain.addBlock(new Block(data)))
-        )
-          this.network.broadcast({ type: "BLOCK", data }, ws);
+        if (!this.network.isSyncing) {
+          const block = new Block(payload);
+          const result = await this.blockchain.addBlock(block);
+          if (result === "SUCCESS") {
+            this.network.broadcast(msg);
+          }
+        }
         break;
       case "ANNOUNCE":
-        this.blockchain.registerValidator(data.address);
-        this.network.broadcast({ type: "ANNOUNCE", data }, ws);
+        this.blockchain.registerValidator(payload.address);
         break;
-      case "PEERS":
-        this.network.discovery.handlePeerDiscovery(data);
+      case "REQUEST_CHAIN":
+        this.network.send(socket, {
+          type: "CHAIN_RESPONSE",
+          data: this.blockchain.chain,
+        });
+        break;
+      case "CHAIN_RESPONSE":
+        await this.network.sync.handleChainResponse(payload);
         break;
     }
   }

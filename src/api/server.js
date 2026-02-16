@@ -45,7 +45,5 @@ export default function startAPI({ chain, p2p }, port = 4000) {
   );
   app.get("/min-fee", (req, res) => res.redirect("/transaction/min-fee"));
 
-  app.listen(port, () => {
-    console.log(`API running on port: ${port}`);
-  });
+  app.listen(port, () => {});
 }

@@ -21,7 +21,7 @@ process.env.PUBLIC_ADDR = publicAddr; // Set for consistency in other modules
 
 // Hardcoded stable nodes for initial connection (Bootnodes)
 const BOOTNODES = [
-  "ws://192.168.100.174:3000", // Example Seed Node
+  // "ws://192.168.100.174:3000"
 ];
 
 const envPeers = process.env.PEERS ? process.env.PEERS.split(",") : [];
@@ -31,10 +31,12 @@ const chain = new Blockchain();
 await chain.init();
 
 const p2p = new Network(chain, PORT, ALL_PEERS);
+await p2p.init();
+
 startAPI({ chain, p2p }, API_PORT);
 
 console.log(
-  `Node running: P2P=ws://localhost:${PORT}, API=http://localhost:${API_PORT}`,
+  `Node running: P2P Port=${PORT} (ws), API=http://localhost:${API_PORT}`,
 );
 
 // Automated Block Production Loop (PoS/PoT Evolution)
@@ -52,7 +54,6 @@ async function startMiningLoop() {
   if (validatorMnemonic) {
     const wallet = Wallet.import(validatorMnemonic);
     console.log(`PoT: Automated validator active for ${wallet.publicKey}`);
-    p2p.setValidatorAddress(wallet.publicKey);
 
     // IDENTITY ANNOUNCEMENT (PoT Heartbeat)
     setInterval(() => {
